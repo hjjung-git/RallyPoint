@@ -9,7 +9,8 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "tsc -b"
+    "build": "tsc -b",
+    "test": "node --test \"packages/server/dist/**/*.test.js\""
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

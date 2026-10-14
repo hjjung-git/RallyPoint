@@ -1,6 +1,7 @@
-import type { DashboardEvent, Plan, PlanDecision, Retrospective, RunReport } from "@rallypoint/shared";
+import type { Card, DashboardEvent, Plan, PlanDecision, Retrospective, RunReport } from "@rallypoint/shared";
 import { Board } from "../board/board.js";
 import { Orchestrator } from "../orchestrator/orchestrator.js";
+import { planNextIteration } from "../planner/next-iteration.js";
 import { planProject } from "../planner/planner.js";
 import { buildRunReport } from "../report/report.js";
 import { writeRetrospective } from "../report/retrospective.js";
@@ -55,6 +56,8 @@ export interface RunProjectOptions {
   runOptions?: RunOptions;
   // true이면 끝난 뒤 모델 호출 한 번으로 회고를 쓴다(실패해도 결과는 그대로다).
   retrospective?: boolean;
+  // 한 번에 돌릴 반복의 최대 수(기본 1). 2 이상이면 한 반복이 끝날 때마다 Planner가 다음 반복의 새 카드를 제안하고 사용자가 승인한다.
+  maxIterations?: number;
   retrospectiveOptions?: RetrospectiveOptions;
 }
 
@@ -208,13 +211,66 @@ async function runProjectSteps(options: RunProjectOptions): Promise<ProjectResul
     runOptions: options.runOptions,
   });
 
+  // 한 반복이 끝났을 때 다음 반복의 새 카드를 제안받고 사용자의 승인을 받는다. 승인되면 카드, 아니면 끝내는 이유를 돌려준다.
+  let current: Plan = plan;
+  let iteration = Math.max(...plan.cards.map((c) => c.iteration));
+  const maxIterations = options.maxIterations ?? 1;
+  if (!Number.isInteger(maxIterations) || maxIterations < 1) {
+    throw new Error("maxIterations must be an integer of 1 or more");
+  }
+  const proposeNext = async (): Promise<{ cards: Card[] | null; note: string | null }> => {
+    let revision: { cards: Card[]; feedback: string } | undefined;
+    for (;;) {
+      const next = await planNextIteration(
+        client,
+        { goal, plan: current, cards: board.getCards(), iteration: iteration + 1, events, revision },
+        options.plannerOptions,
+      );
+      planningCalls += next.attempts;
+      planningUsage.inputTokens += next.usage.inputTokens;
+      planningUsage.outputTokens += next.usage.outputTokens;
+      if (next.status === "done") {
+        return { cards: null, note: null };
+      }
+      if (next.status === "failed") {
+        return { cards: null, note: `Next iteration was not planned: ${next.message}` };
+      }
+      const proposed: Plan = {
+        ...current,
+        cards: [...current.cards, ...next.cards],
+        estimatedCalls: Math.max(current.estimatedCalls, current.cards.length + next.cards.length),
+      };
+      observer.onPlan?.(proposed);
+      const decision = await interaction.reviewPlan(proposed);
+      if (decision.action === "approve") {
+        current = proposed;
+        return { cards: next.cards, note: null };
+      }
+      if (decision.action === "cancel") {
+        return { cards: null, note: "Next iteration was not approved." };
+      }
+      revision = { cards: next.cards, feedback: decision.feedback };
+    }
+  };
+
   // 3. 실행: 멈출 때마다 이유에 맞게 사용자에게 묻고 이어서 돌린다.
   for (;;) {
     const summary = await orchestrator.run();
     const run = { totalCalls: summary.totalCalls, usage: summary.usage };
 
     if (summary.outcome === "finished") {
-      return finish(result("finished", plan, null, run, buildRunReport(board.getCards(), events)));
+      let note: string | null = null;
+      if (iteration < maxIterations) {
+        const next = await proposeNext();
+        if (next.cards !== null) {
+          board.registerCards(next.cards);
+          iteration += 1;
+          observer.onBoardReady?.(board);
+          continue;
+        }
+        note = next.note;
+      }
+      return finish(result("finished", current, note, run, buildRunReport(board.getCards(), events)));
     }
 
     if (summary.outcome === "paused") {
@@ -227,7 +283,7 @@ async function runProjectSteps(options: RunProjectOptions): Promise<ProjectResul
           message: issue.message,
         });
         if (decision === "stop") {
-          return finish(result("stopped", plan, `Stopped at card ${card.id}`, run, buildRunReport(board.getCards(), events)));
+          return finish(result("stopped", current, `Stopped at card ${card.id}`, run, buildRunReport(board.getCards(), events)));
         }
         orchestrator.retryBlocked(card.id);
       }
@@ -241,7 +297,7 @@ async function runProjectSteps(options: RunProjectOptions): Promise<ProjectResul
     return finish(
       result(
         "stalled",
-        plan,
+        current,
         `Cannot continue. Remaining cards: ${remaining.join(", ")}`,
         run,
         buildRunReport(board.getCards(), events),

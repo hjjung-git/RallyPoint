@@ -15,16 +15,21 @@ const args = process.argv.slice(2);
 const useDashboard = args.includes("--dashboard");
 const portArg = args.find((a) => a.startsWith("--port="));
 const port = portArg ? Number(portArg.slice("--port=".length)) : undefined;
+const iterationsArg = args.find((a) => a.startsWith("--iterations="));
 const [scenarioPath, workDir] = args.filter((a) => !a.startsWith("--"));
 const apiKey = process.env.ANTHROPIC_API_KEY;
 const model = process.env.ANTHROPIC_MODEL;
 
 if (!scenarioPath || !workDir) {
-  console.error("사용법: npm run rally -- <시나리오 파일> <빈 작업 폴더> [--dashboard] [--port=3001] [--no-retro]");
+  console.error("사용법: npm run rally -- <시나리오 파일> <빈 작업 폴더> [--dashboard] [--port=3001] [--no-retro] [--iterations=1]");
   process.exit(1);
 }
 if (port !== undefined && (!Number.isInteger(port) || port < 0 || port > 65535)) {
   console.error("--port는 0~65535 사이의 정수여야 합니다.");
+  process.exit(1);
+}
+if (iterationsArg !== undefined && !/^--iterations=[1-9]\d?$/.test(iterationsArg)) {
+  console.error("--iterations는 1~99 사이의 정수여야 합니다.");
   process.exit(1);
 }
 if (!apiKey || !model) {
@@ -138,6 +143,7 @@ try {
     },
     observer: hub?.observer,
     retrospective: !args.includes("--no-retro"),
+    maxIterations: iterationsArg ? Number(iterationsArg.slice("--iterations=".length)) : 1,
   });
 
   console.log(`\n결과: ${result.outcome}${result.message ? ` - ${result.message}` : ""}`);

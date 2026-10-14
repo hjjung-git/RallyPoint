@@ -41,6 +41,16 @@ function verdict(value: "approve" | "reject", findings: string[] = []): Scripted
   ]);
 }
 
+const polishCard = {
+  id: "c3", title: "Polish", description: "Polish the page", unitKind: "builder", areaId: "web",
+  scope: { read: ["src/"], write: ["src/web/"] }, dependsOn: ["c2"], doneCriteria: "polished", iteration: 7,
+};
+const nextCards = (...cards: unknown[]): ScriptedStep => reply([{ name: "submit_cards", input: { cards } }], 40, 20);
+const writePolish: ScriptedStep = reply([propose([{ path: "src/web/polish.ts", content: "export {};\n" }])]);
+const firstIteration = (): ScriptedStep[] => [
+  reply([submit(plan(true))], 100, 50), writeTypes, verdict("approve"), writePage, verdict("approve"),
+];
+
 // 질문에 대한 답을 미리 정해 두는 가짜 사용자
 class ScriptedUser implements Interaction {
   readonly planReviews: Plan[] = [];
@@ -165,6 +175,80 @@ describe("runProject", () => {
     const result = await promise;
     assert.equal(result.retrospective, null);
     assert.equal(client.requests.length, 5);
+  });
+
+  it("plans and runs a second iteration when the user approves the new cards", async () => {
+    const user = new ScriptedUser();
+    const { client, promise } = start(
+      [...firstIteration(), nextCards(polishCard), writePolish, verdict("approve")],
+      user,
+      undefined,
+      { maxIterations: 2 },
+    );
+    const result = await promise;
+
+    assert.equal(result.outcome, "finished");
+    assert.equal(await readFile(join(workDir, "src", "web", "polish.ts"), "utf8"), "export {};\n");
+    assert.equal(user.planReviews.length, 2);
+    assert.equal(user.planReviews[1]?.cards.length, 3);
+    assert.equal(result.totalCalls, 8);
+    assert.deepEqual(result.report?.iterations.map((r) => r.iteration), [1, 2]);
+    assert.ok(client.requests[5]?.prompt.includes("The next iteration number is 2"));
+    assert.equal(result.plan?.cards.length, 3);
+  });
+
+  it("stops after the first iteration when the planner says the goal is met", async () => {
+    const user = new ScriptedUser();
+    const { promise } = start(
+      [...firstIteration(), reply([{ name: "finish_project", input: { reason: "met" } }])],
+      user,
+      undefined,
+      { maxIterations: 3 },
+    );
+    const result = await promise;
+    assert.equal(result.outcome, "finished");
+    assert.equal(result.message, null);
+    assert.equal(user.planReviews.length, 1);
+    assert.equal(result.totalCalls, 6);
+  });
+
+  it("does not run new cards when the user declines them, and replans on a revision request", async () => {
+    const declined = new ScriptedUser({ plans: [{ action: "approve" }, { action: "cancel" }] });
+    const first = await start([...firstIteration(), nextCards(polishCard)], declined, undefined, { maxIterations: 2 }).promise;
+    assert.equal(first.outcome, "finished");
+    assert.ok(first.message?.includes("not approved"));
+    assert.equal(first.report?.iterations.length, 1);
+
+    const revised = new ScriptedUser({
+      plans: [{ action: "approve" }, { action: "revise", feedback: "rename it" }, { action: "approve" }],
+    });
+    const { client, promise } = start(
+      [...firstIteration(), nextCards(polishCard), nextCards({ ...polishCard, title: "Renamed" }), writePolish, verdict("approve")],
+      revised,
+      undefined,
+      { maxIterations: 2, workspaceDir: join(dir, "work2") },
+    );
+    const second = await promise;
+    assert.equal(second.outcome, "finished");
+    assert.ok(client.requests[6]?.prompt.includes("rename it"));
+    assert.equal(second.plan?.cards.find((c) => c.id === "c3")?.title, "Renamed");
+  });
+
+  it("keeps the finished result when the next iteration cannot be planned", async () => {
+    const { promise } = start(
+      [...firstIteration(), new LlmError("bad key", false)],
+      new ScriptedUser(),
+      undefined,
+      { maxIterations: 2 },
+    );
+    const result = await promise;
+    assert.equal(result.outcome, "finished");
+    assert.ok(result.message?.includes("not planned"));
+  });
+
+  it("rejects a maxIterations that is not a positive integer", async () => {
+    const { promise } = start([reply([submit(plan(true))])], new ScriptedUser(), undefined, { maxIterations: 0 });
+    await assert.rejects(promise, /maxIterations/);
   });
 
   it("finishes without reviews when the plan has no reviewer", async () => {

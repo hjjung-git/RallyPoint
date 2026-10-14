@@ -226,6 +226,22 @@ const scopeSchema = {
 
 const unitKindSchema = { type: "string", enum: ["builder", "reviewer", "integrator"] };
 
+export const cardSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    title: { type: "string" },
+    description: { type: "string" },
+    unitKind: unitKindSchema,
+    areaId: { type: ["string", "null"] },
+    scope: scopeSchema,
+    dependsOn: { type: "array", items: { type: "string" } },
+    doneCriteria: { type: "string" },
+    iteration: { type: "integer", minimum: 1 },
+  },
+  required: ["id", "title", "description", "unitKind", "areaId", "scope", "dependsOn", "doneCriteria", "iteration"],
+};
+
 const submitPlanTool: ToolDefinition = {
   name: SUBMIT_PLAN,
   description: "Submit the complete plan: areas, shared paths, units, cards and the estimated number of model calls.",
@@ -262,24 +278,7 @@ const submitPlanTool: ToolDefinition = {
           required: ["id", "kind", "role", "scope", "permission", "reportFormat", "areaId"],
         },
       },
-      cards: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            id: { type: "string" },
-            title: { type: "string" },
-            description: { type: "string" },
-            unitKind: unitKindSchema,
-            areaId: { type: ["string", "null"] },
-            scope: scopeSchema,
-            dependsOn: { type: "array", items: { type: "string" } },
-            doneCriteria: { type: "string" },
-            iteration: { type: "integer", minimum: 1 },
-          },
-          required: ["id", "title", "description", "unitKind", "areaId", "scope", "dependsOn", "doneCriteria", "iteration"],
-        },
-      },
+      cards: { type: "array", items: cardSchema },
       estimatedCalls: { type: "integer", minimum: 1 },
     },
     required: ["areas", "sharedPaths", "units", "cards", "estimatedCalls"],

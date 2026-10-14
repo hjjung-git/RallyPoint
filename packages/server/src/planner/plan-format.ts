@@ -32,6 +32,18 @@ export function parsePlan(input: unknown): ParsePlanResult {
   }
 }
 
+// 카드 목록만 따로 읽는다(다음 반복에서 Planner가 새 카드만 낼 때 쓴다).
+export function parseCards(input: unknown, path = "cards"): { ok: true; cards: Card[] } | { ok: false; message: string } {
+  try {
+    return { ok: true, cards: asArray(input, path).map((v, i) => parseCard(v, `${path}[${i}]`)) };
+  } catch (error) {
+    if (error instanceof FormatError) {
+      return { ok: false, message: error.message };
+    }
+    throw error;
+  }
+}
+
 function parseArea(value: unknown, path: string): Area {
   const o = asObject(value, path);
   return {

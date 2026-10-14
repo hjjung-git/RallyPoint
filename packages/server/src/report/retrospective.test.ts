@@ -39,6 +39,7 @@ describe("buildRetrospectivePrompt", () => {
     const prompt = buildRetrospectivePrompt(input);
     assert.ok(prompt.includes("Build a todo CLI"));
     assert.ok(prompt.includes("반복 1"));
+    assert.ok(prompt.includes('c1 "Types" (done)'));
     assert.ok(prompt.includes("Review rejected card c1: Missing export no default export"));
     assert.ok(prompt.includes("Conflict on src/a.ts between cards c1, c2"));
     assert.ok(!prompt.includes("approve"));

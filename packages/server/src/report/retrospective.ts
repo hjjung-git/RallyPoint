@@ -54,6 +54,10 @@ export function buildRetrospectivePrompt(input: RetrospectiveInput): string {
   const lines: string[] = [`Goal:\n${input.goal}`, "", `Outcome: ${input.outcome}`, "", "Iterations:"];
   for (const iteration of input.report.iterations) {
     lines.push(`- ${describeIteration(iteration)}`);
+    // 어떤 카드가 어느 반복이었는지 알아야 "왜 반복이 더 필요했나" 같은 해석을 할 수 있다.
+    for (const card of iteration.cards) {
+      lines.push(`    - ${card.id} "${card.title}" (${card.status})`);
+    }
   }
 
   const facts: string[] = [];

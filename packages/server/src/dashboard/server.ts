@@ -1,9 +1,11 @@
 import { createServer } from "node:http";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import type { ServerMessage } from "@rallypoint/shared";
 import type { DashboardHub } from "./hub.js";
-import { STATUS_PAGE } from "./page.js";
+import { DASHBOARD_CSP, DASHBOARD_PAGE } from "./page.js";
 
 export const DEFAULT_PORT = 3001;
 const MAX_BODY_BYTES = 1_000_000;
@@ -15,7 +17,13 @@ export interface DashboardServerOptions {
   port?: number;
   // 기본은 이 컴퓨터에서만 접속할 수 있는 주소다. 인증이 없어서 바깥에 열지 않는다.
   host?: string;
+  // 화면 스크립트(packages/ui를 빌드한 결과) 폴더. 기본은 이 저장소의 packages/ui/dist다.
+  uiDir?: string;
 }
+
+const DEFAULT_UI_DIR = fileURLToPath(new URL("../../../ui/dist/", import.meta.url));
+// 폴더 이름 없이 평평한 .js 파일만 내보낸다. 테스트 파일은 제외한다.
+const UI_FILE = /^\/ui\/([A-Za-z0-9-]+)\.js$/;
 
 export interface RunningDashboardServer {
   host: string;
@@ -35,9 +43,10 @@ export async function startDashboardServer(
 ): Promise<RunningDashboardServer> {
   const host = options.host ?? "127.0.0.1";
   const streams = new Set<ServerResponse>();
+  const uiDir = options.uiDir ?? DEFAULT_UI_DIR;
 
   const server: Server = createServer((req, res) => {
-    handle(hub, streams, req, res).catch(() => {
+    handle(hub, streams, uiDir, req, res).catch(() => {
       if (!res.headersSent) {
         sendJson(res, 500, { ok: false, error: "Internal error." });
       } else {
@@ -82,6 +91,7 @@ export async function startDashboardServer(
 async function handle(
   hub: DashboardHub,
   streams: Set<ServerResponse>,
+  uiDir: string,
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
@@ -104,10 +114,28 @@ async function handle(
   if (path === "/" && method === "GET") {
     res.writeHead(200, {
       "Content-Type": "text/html; charset=utf-8",
-      "Content-Security-Policy":
-        "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'",
+      "Content-Security-Policy": DASHBOARD_CSP,
     });
-    res.end(STATUS_PAGE);
+    res.end(DASHBOARD_PAGE);
+    return;
+  }
+
+  const uiMatch = UI_FILE.exec(path);
+  if (uiMatch && method === "GET") {
+    const name = uiMatch[1] as string;
+    try {
+      const code = await readFile(`${uiDir.replace(/[\\/]+$/, "")}/${name}.js`);
+      res.writeHead(200, {
+        "Content-Type": "text/javascript; charset=utf-8",
+        "Cache-Control": "no-cache",
+      });
+      res.end(code);
+    } catch {
+      sendJson(res, 404, {
+        ok: false,
+        error: "UI script not found. Run `npm run build` first.",
+      });
+    }
     return;
   }
 

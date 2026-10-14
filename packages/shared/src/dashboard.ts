@@ -1,6 +1,7 @@
 import type { Card } from "./card.js";
 import type { DashboardEvent } from "./event.js";
 import type { Plan } from "./plan.js";
+import type { RunReport } from "./report.js";
 import type { UnitStatus } from "./unit.js";
 
 // 대시보드 화면이 서버와 주고받는 형태. 서버는 변화가 있을 때마다 전체 상태(snapshot)를 보내고,
@@ -72,6 +73,8 @@ export interface SessionResult {
   totalCalls: number;
   inputTokens: number;
   outputTokens: number;
+  // 반복별 정리. 실행이 시작되지 못했으면 null이다.
+  report: RunReport | null;
 }
 
 export interface DashboardSnapshot {
@@ -87,6 +90,8 @@ export interface DashboardSnapshot {
   usage: { totalCalls: number; inputTokens: number; outputTokens: number };
   prompt: Prompt | null;
   openIssues: OpenIssue[];
+  // 지금 검토 중인 카드와 검토하는 유닛
+  activeReviews: { cardId: string; unitId: string }[];
   result: SessionResult | null;
   // 최근 이벤트. 오래된 것은 잘려 나간다.
   log: LogEntry[];

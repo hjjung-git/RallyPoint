@@ -15,6 +15,8 @@ export type DashboardEvent =
       kind: "blocked" | "failed" | "conflict";
       message: string;
     }
+  // 검토자 유닛이 카드 검토를 시작했다.
+  | { type: "review_started"; cardId: string; unitId: string }
   // 검토자 유닛의 판정
   | {
       type: "review_result";

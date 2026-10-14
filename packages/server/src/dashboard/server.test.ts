@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import type { DashboardSnapshot, ServerMessage } from "@rallypoint/shared";
 import { DashboardHub } from "./hub.js";
@@ -75,16 +78,43 @@ describe("dashboard server", () => {
     assert.equal(snapshot.phase, "idle");
   });
 
-  it("serves the status page with a restrictive content policy", async () => {
+  it("serves the dashboard page with a restrictive content policy", async () => {
     const response = await fetch(`${server.url}/`);
     assert.equal(response.status, 200);
     assert.match(response.headers.get("content-type") ?? "", /text\/html/);
-    assert.match(response.headers.get("content-security-policy") ?? "", /default-src 'self'/);
+    const policy = response.headers.get("content-security-policy") ?? "";
+    assert.match(policy, /default-src 'self'/);
+    const scriptDirective = policy.split(";").map((d) => d.trim()).find((d) => d.startsWith("script-src"));
+    assert.equal(scriptDirective, "script-src 'self'");
     const html = await response.text();
     assert.ok(html.includes("RallyPoint"));
-    assert.ok(html.includes("/api/stream"));
-    // 서버에서 온 글을 HTML로 해석하는 코드는 쓰지 않는다.
-    assert.ok(!html.includes("innerHTML"));
+    assert.ok(html.includes('src="/ui/main.js"'));
+    // 페이지에는 직접 실행되는 스크립트를 두지 않는다.
+    assert.ok(!/<script(?![^>]*src=)/.test(html));
+  });
+
+  it("serves built UI scripts from the ui directory only", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "rally-ui-"));
+    await writeFile(join(dir, "main.js"), "export const x = 1;");
+    await writeFile(join(dir, "layout.test.js"), "secret");
+    await mkdir(join(dir, "sub"));
+    await writeFile(join(dir, "sub", "deep.js"), "deep");
+    const local = await startDashboardServer(hub, { port: 0, uiDir: dir });
+    try {
+      const ok = await fetch(`${local.url}/ui/main.js`);
+      assert.equal(ok.status, 200);
+      assert.match(ok.headers.get("content-type") ?? "", /javascript/);
+      assert.equal(await ok.text(), "export const x = 1;");
+
+      assert.equal((await fetch(`${local.url}/ui/missing.js`)).status, 404);
+      assert.equal((await fetch(`${local.url}/ui/layout.test.js`)).status, 404);
+      assert.equal((await fetch(`${local.url}/ui/sub/deep.js`)).status, 404);
+      assert.equal((await fetch(`${local.url}/ui/..%2Fmain.js`)).status, 404);
+      assert.equal((await fetch(`${local.url}/ui/main.js.map`)).status, 404);
+    } finally {
+      await local.close();
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("streams a snapshot first and then events and updated snapshots", async () => {

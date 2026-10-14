@@ -186,6 +186,9 @@ describe("Orchestrator", () => {
     assert.ok(client.requests[1]?.prompt.includes('<file path="src/a.ts"'));
     assert.ok(events.some((e) => e.type === "review_result" && e.verdict === "approve"));
     assert.ok(
+      events.some((e) => e.type === "review_started" && e.cardId === "c1" && e.unitId === "r1"),
+    );
+    assert.ok(
       events.some((e) => e.type === "unit_status_changed" && e.unitId === "r1" && e.status === "working"),
     );
     assert.ok(

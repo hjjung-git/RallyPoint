@@ -161,6 +161,7 @@ export class Orchestrator {
       if (card) {
         this.reviewing.add(card.id);
         this.onEvent({ type: "unit_status_changed", unitId: unit.id, status: "working" });
+        this.onEvent({ type: "review_started", cardId: card.id, unitId: unit.id });
         inFlight.set(unit.id, this.start(unit, card, true));
       }
     }

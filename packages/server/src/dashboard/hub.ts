@@ -50,6 +50,8 @@ export class DashboardHub {
   private pauseReason: string | null = null;
   private usage = { totalCalls: 0, inputTokens: 0, outputTokens: 0 };
   private readonly openIssues = new Map<string, OpenIssue>();
+  // 카드 id -> 검토 중인 유닛 id
+  private readonly activeReviews = new Map<string, string>();
   private result: SessionResult | null = null;
   private log: LogEntry[] = [];
   private seq = 0;
@@ -94,6 +96,7 @@ export class DashboardHub {
         totalCalls: result.totalCalls,
         inputTokens: result.usage.inputTokens,
         outputTokens: result.usage.outputTokens,
+        report: result.report,
       };
       this.broadcastSnapshot();
     },
@@ -105,6 +108,7 @@ export class DashboardHub {
         totalCalls: this.usage.totalCalls,
         inputTokens: this.usage.inputTokens,
         outputTokens: this.usage.outputTokens,
+        report: null,
       };
       this.broadcastSnapshot();
     },
@@ -142,6 +146,16 @@ export class DashboardHub {
         if (event.from === "blocked") {
           this.openIssues.delete(event.cardId);
         }
+        // 검토 중이던 카드가 다른 곳으로 가면 검토는 끝난 것이다.
+        if (event.from === "review") {
+          this.activeReviews.delete(event.cardId);
+        }
+        break;
+      case "review_started":
+        this.activeReviews.set(event.cardId, event.unitId);
+        break;
+      case "review_result":
+        this.activeReviews.delete(event.cardId);
         break;
       case "usage_updated":
         this.usage = {
@@ -171,6 +185,7 @@ export class DashboardHub {
       usage: { ...this.usage },
       prompt,
       openIssues: [...this.openIssues.values()],
+      activeReviews: [...this.activeReviews].map(([cardId, unitId]) => ({ cardId, unitId })),
       result: this.result,
       log: [...this.log],
     };

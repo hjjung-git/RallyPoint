@@ -92,6 +92,22 @@ describe("DashboardHub snapshot", () => {
     assert.deepEqual(snapshot.openIssues, []);
   });
 
+  it("tracks which unit is reviewing which card until the verdict or a move", () => {
+    const hub = new DashboardHub();
+    hub.onEvent({ type: "review_started", cardId: "c1", unitId: "r1" });
+    hub.onEvent({ type: "review_started", cardId: "c2", unitId: "r2" });
+    assert.deepEqual(hub.getSnapshot().activeReviews, [
+      { cardId: "c1", unitId: "r1" },
+      { cardId: "c2", unitId: "r2" },
+    ]);
+
+    hub.onEvent({ type: "review_result", cardId: "c1", verdict: "approve", summary: "ok", findings: [] });
+    assert.deepEqual(hub.getSnapshot().activeReviews, [{ cardId: "c2", unitId: "r2" }]);
+
+    hub.onEvent({ type: "card_moved", cardId: "c2", from: "review", to: "blocked" });
+    assert.deepEqual(hub.getSnapshot().activeReviews, []);
+  });
+
   it("keeps only the latest log entries with increasing numbers", () => {
     const hub = new DashboardHub({ maxLog: 3, now: () => new Date("2026-10-14T00:00:00Z") });
     for (let i = 0; i < 5; i += 1) {
@@ -110,10 +126,12 @@ describe("DashboardHub snapshot", () => {
       message: null,
       totalCalls: 7,
       usage: { inputTokens: 70, outputTokens: 7 },
+      report: { iterations: [{ iteration: 1, cards: [], reviewRejections: 0, conflicts: 0, issues: 0 }] },
     });
     const snapshot = hub.getSnapshot();
     assert.equal(snapshot.phase, "ended");
     assert.equal(snapshot.result?.outcome, "finished");
+    assert.equal(snapshot.result?.report?.iterations.length, 1);
     assert.deepEqual(snapshot.usage, { totalCalls: 7, inputTokens: 70, outputTokens: 7 });
   });
 

@@ -175,6 +175,7 @@ function buildSystem(mayAsk: boolean): string {
     "- Scope entries are either an exact file path (\"src/app.ts\") or a folder prefix ending with \"/\" (\"src/\"). Use \"/\" separators, no wildcards, no absolute paths, no \"..\".",
     "- Cards are small tasks. Each card has a unitKind, an areaId (required for builder cards; null only for cards any area's unit may take), a scope, dependsOn (ids of cards that must be done first, no cycles), doneCriteria that can be checked, and an iteration number starting at 1 (later iterations build on earlier ones).",
     "- Every card needs a unit of its kind that can take it. Cards that write files need a unit with permission \"propose\".",
+    "- Write area names and goals, unit roles, card titles, descriptions and doneCriteria in the same language as the user's goal. Ids, paths and code stay ASCII.",
     "- Use short unique ASCII ids. Keep the plan as small as the goal allows: fewer, clearer cards are better than many vague ones.",
     "- estimatedCalls is your rough estimate of total model calls to finish, counting retries and reviews. It must be at least the number of cards.",
   ];

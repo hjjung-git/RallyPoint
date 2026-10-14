@@ -81,10 +81,9 @@ export class GraphView {
         update: (node) => {
           const [rect, text, title] = [...node.children] as [SVGRectElement, SVGTextElement, SVGTitleElement];
           setAttrs(rect, { x: lane.box.x, y: lane.box.y, width: lane.box.width, height: lane.box.height, rx: 10 });
-          const cx = METRICS.laneLabelWidth / 2;
-          const cy = lane.box.y + lane.box.height / 2;
-          setAttrs(text, { x: cx, y: cy, transform: `rotate(-90 ${cx} ${cy})`, "text-anchor": "middle" });
-          setText(text, truncate(lane.label, 10));
+          // 영역 이름은 띠의 왼쪽 위에 가로로 쓴다. 세로로 눕히면 짧은 한글 이름이 읽기 어렵다.
+          setAttrs(text, { x: 12, y: lane.box.y + 16, "text-anchor": "start" });
+          setText(text, truncate(lane.label, 8));
           setText(title, lane.goal ? `${lane.label}: ${lane.goal}` : lane.label);
         },
       })),

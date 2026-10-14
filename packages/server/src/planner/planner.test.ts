@@ -132,6 +132,12 @@ describe("validatePlan", () => {
 });
 
 describe("planProject", () => {
+  it("tells the model to write in the language of the goal", async () => {
+    const client = new ScriptedClient([reply([submit(rawPlan())])]);
+    await planProject(client, { goal: "할 일 앱을 만든다" }, noSleep);
+    assert.ok(client.requests[0]?.system.includes("same language as the user's goal"));
+  });
+
   it("returns a valid plan and offers both tools on the first call", async () => {
     const client = new ScriptedClient([reply([submit(rawPlan())], 200, 100)]);
     const result = await planProject(client, { goal: "Build a notes app" }, noSleep);

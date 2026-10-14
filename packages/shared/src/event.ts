@@ -8,4 +8,17 @@ export type DashboardEvent =
   | { type: "conflict_resolved"; path: string }
   | { type: "paused"; reason: string }
   | { type: "resumed" }
-  | { type: "usage_updated"; totalCalls: number };
+  // 사용자에게 알려야 하는 문제. 카드가 막혔거나, 호출이 끝내 실패했거나, 충돌이 반복됐다.
+  | {
+      type: "issue_raised";
+      cardId: string;
+      kind: "blocked" | "failed" | "conflict";
+      message: string;
+    }
+  // 지금까지 모델 호출 횟수와 토큰 합계
+  | {
+      type: "usage_updated";
+      totalCalls: number;
+      inputTokens: number;
+      outputTokens: number;
+    };

@@ -10,7 +10,8 @@
   ],
   "scripts": {
     "build": "tsc -b",
-    "test": "node --test \"packages/server/dist/**/*.test.js\""
+    "test": "node --test \"packages/server/dist/**/*.test.js\"",
+    "rally": "node --env-file=.env packages/server/dist/cli.js"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

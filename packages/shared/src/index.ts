@@ -4,3 +4,4 @@ export * from "./card.js";
 export * from "./message.js";
 export * from "./event.js";
 export * from "./plan.js";
+export * from "./dashboard.js";

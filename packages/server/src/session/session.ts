@@ -1,4 +1,4 @@
-import type { DashboardEvent, Plan } from "@rallypoint/shared";
+import type { DashboardEvent, Plan, PlanDecision } from "@rallypoint/shared";
 import { Board } from "../board/board.js";
 import { Orchestrator } from "../orchestrator/orchestrator.js";
 import { planProject } from "../planner/planner.js";
@@ -9,10 +9,7 @@ import { scenarioToGoal } from "../scenario/scenario.js";
 import type { Scenario } from "../scenario/scenario.js";
 import { Workspace } from "../workspace/workspace.js";
 
-export type PlanDecision =
-  | { action: "approve" }
-  | { action: "revise"; feedback: string }
-  | { action: "cancel" };
+export type { PlanDecision };
 
 export interface IssueInfo {
   cardId: string;
@@ -30,12 +27,26 @@ export interface Interaction {
   resolveIssue(issue: IssueInfo): Promise<"retry" | "stop">;
 }
 
+// 진행 상황을 바깥(대시보드 등)에 알리는 연결부. 모두 선택이다.
+export interface SessionObserver {
+  // Planner가 일하는 중이거나(planning), 승인된 계획을 실행하는 중이다(running).
+  onPhase?(phase: "planning" | "running"): void;
+  // 계획이 나올 때마다. 사용자 검토 전이다.
+  onPlan?(plan: Plan): void;
+  // 승인된 계획이 보드에 등록된 직후
+  onBoardReady?(board: Board): void;
+  onEnd?(result: ProjectResult): void;
+  // 결과를 내지 못하고 오류로 끝났다(예: 작업 폴더가 비어 있지 않다).
+  onFail?(message: string): void;
+}
+
 export interface RunProjectOptions {
   scenario: Scenario;
   client: LlmClient;
   workspaceDir: string;
   interaction: Interaction;
   onEvent?: (event: DashboardEvent) => void;
+  observer?: SessionObserver;
   maxConcurrent?: number;
   plannerOptions?: PlannerOptions;
   runOptions?: RunOptions;
@@ -59,7 +70,19 @@ export interface ProjectResult {
 
 // 시나리오에서 시작해 끝까지 잇는다: 작업 폴더 열기, 계획과 승인, 보드 등록, 실행, 문제 해결.
 export async function runProject(options: RunProjectOptions): Promise<ProjectResult> {
+  try {
+    const result = await runProjectSteps(options);
+    options.observer?.onEnd?.(result);
+    return result;
+  } catch (error) {
+    options.observer?.onFail?.(error instanceof Error ? error.message : String(error));
+    throw error;
+  }
+}
+
+async function runProjectSteps(options: RunProjectOptions): Promise<ProjectResult> {
   const { scenario, client, interaction } = options;
+  const observer = options.observer ?? {};
   const onEvent = options.onEvent ?? (() => {});
 
   // 비용을 쓰기 전에 작업 폴더부터 확인한다. 비어 있지 않으면 여기서 오류가 난다.
@@ -90,6 +113,7 @@ export async function runProject(options: RunProjectOptions): Promise<ProjectRes
   let revision: { plan: Plan; feedback: string } | undefined;
 
   for (;;) {
+    observer.onPhase?.("planning");
     const planned = await planProject(
       client,
       { goal, answers, revision },
@@ -115,6 +139,7 @@ export async function runProject(options: RunProjectOptions): Promise<ProjectRes
     }
 
     plan = planned.plan;
+    observer.onPlan?.(plan);
     const decision = await interaction.reviewPlan(plan);
     if (decision.action === "cancel") {
       return result("cancelled", plan, null);
@@ -126,6 +151,7 @@ export async function runProject(options: RunProjectOptions): Promise<ProjectRes
   }
 
   // 2. 승인된 계획을 보드에 등록한다. 영역, 유닛, 카드 순서다.
+  observer.onPhase?.("running");
   const issues = new Map<string, { kind: IssueInfo["kind"]; message: string }>();
   const handleEvent = (event: DashboardEvent): void => {
     if (event.type === "issue_raised") {
@@ -137,6 +163,7 @@ export async function runProject(options: RunProjectOptions): Promise<ProjectRes
   board.registerAreas(plan.areas, plan.sharedPaths);
   board.registerUnits(plan.units);
   board.registerCards(plan.cards);
+  observer.onBoardReady?.(board);
 
   const orchestrator = new Orchestrator({
     board,

@@ -266,6 +266,45 @@ describe("runProject", () => {
     assert.ok(client.requests[3]?.prompt.includes("- use a union type"));
   });
 
+  it("tells the observer about each stage in order", async () => {
+    const calls: string[] = [];
+    const user = new ScriptedUser({
+      plans: [{ action: "revise", feedback: "again" }, { action: "approve" }],
+    });
+    const client = new ScriptedClient([
+      reply([submit(plan(false))]),
+      reply([submit(plan(false))]),
+      writeTypes,
+      writePage,
+    ]);
+    const result = await runProject({
+      scenario,
+      client,
+      workspaceDir: workDir,
+      interaction: user,
+      plannerOptions: { sleep: async () => {} },
+      runOptions: { sleep: async () => {} },
+      observer: {
+        onPhase: (phase) => calls.push(`phase:${phase}`),
+        onPlan: () => calls.push("plan"),
+        onBoardReady: () => calls.push("board"),
+        onEnd: (r) => calls.push(`end:${r.outcome}`),
+        onFail: () => calls.push("fail"),
+      },
+    });
+
+    assert.equal(result.outcome, "finished");
+    assert.deepEqual(calls, [
+      "phase:planning",
+      "plan",
+      "phase:planning",
+      "plan",
+      "phase:running",
+      "board",
+      "end:finished",
+    ]);
+  });
+
   it("passes board events to the caller", async () => {
     const events: DashboardEvent[] = [];
     const { promise } = start(

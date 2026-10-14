@@ -1,18 +1,29 @@
 // 시나리오 파일로 RallyPoint를 실행한다.
 // 실행: npm run rally -- scenarios/sample-todo-cli.md <빈 작업 폴더>
 import { createInterface } from "node:readline/promises";
+import { DashboardHub } from "./dashboard/hub.js";
+import { DashboardInteraction } from "./dashboard/interaction.js";
+import { startDashboardServer } from "./dashboard/server.js";
 import type { DashboardEvent, Plan } from "@rallypoint/shared";
 import { createAnthropicClient } from "./runner/anthropic-client.js";
 import { loadScenario } from "./scenario/scenario.js";
 import { runProject } from "./session/session.js";
 import type { Interaction, IssueInfo, PlanDecision } from "./session/session.js";
 
-const [scenarioPath, workDir] = process.argv.slice(2);
+const args = process.argv.slice(2);
+const useDashboard = args.includes("--dashboard");
+const portArg = args.find((a) => a.startsWith("--port="));
+const port = portArg ? Number(portArg.slice("--port=".length)) : undefined;
+const [scenarioPath, workDir] = args.filter((a) => !a.startsWith("--"));
 const apiKey = process.env.ANTHROPIC_API_KEY;
 const model = process.env.ANTHROPIC_MODEL;
 
 if (!scenarioPath || !workDir) {
-  console.error("사용법: npm run rally -- <시나리오 파일> <빈 작업 폴더>");
+  console.error("사용법: npm run rally -- <시나리오 파일> <빈 작업 폴더> [--dashboard] [--port=3001]");
+  process.exit(1);
+}
+if (port !== undefined && (!Number.isInteger(port) || port < 0 || port > 65535)) {
+  console.error("--port는 0~65535 사이의 정수여야 합니다.");
   process.exit(1);
 }
 if (!apiKey || !model) {
@@ -106,12 +117,25 @@ function printEvent(event: DashboardEvent): void {
 
 try {
   const client = createAnthropicClient({ apiKey, model });
+
+  // --dashboard이면 질문과 승인을 터미널 대신 브라우저 화면에서 받는다.
+  let hub: DashboardHub | null = null;
+  if (useDashboard) {
+    hub = new DashboardHub({ scenarioTitle: loaded.scenario.title });
+    const server = await startDashboardServer(hub, { port });
+    console.log(`대시보드: ${server.url} (브라우저에서 여세요)`);
+  }
+
   const result = await runProject({
     scenario: loaded.scenario,
     client,
     workspaceDir: workDir,
-    interaction,
-    onEvent: printEvent,
+    interaction: hub ? new DashboardInteraction(hub) : interaction,
+    onEvent: (event) => {
+      printEvent(event);
+      hub?.onEvent(event);
+    },
+    observer: hub?.observer,
   });
 
   console.log(`\n결과: ${result.outcome}${result.message ? ` - ${result.message}` : ""}`);
@@ -119,6 +143,11 @@ try {
     `모델 호출 ${result.totalCalls}회, 토큰 입력 ${result.usage.inputTokens} / 출력 ${result.usage.outputTokens}`,
   );
   process.exitCode = result.outcome === "finished" ? 0 : 1;
+  if (hub) {
+    console.log("대시보드는 계속 켜 둡니다. 끝내려면 Ctrl+C를 누르세요.");
+    rl.close();
+    await new Promise<void>(() => {});
+  }
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;

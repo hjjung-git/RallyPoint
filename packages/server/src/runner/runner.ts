@@ -227,10 +227,10 @@ function buildPrompt(card: Card, files: string[], allowedWrite: string[]): strin
 }
 
 // 1초, 2초, 4초... 순으로 늘린다.
-function retryDelayMs(attempt: number): number {
+export function retryDelayMs(attempt: number): number {
   return 1000 * 2 ** (attempt - 1);
 }
 
-function defaultSleep(ms: number): Promise<void> {
+export function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

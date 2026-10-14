@@ -1,3 +1,4 @@
+import type { Area } from "./area.js";
 import type { Card } from "./card.js";
 import type { UnitSpec } from "./unit.js";
 
@@ -11,6 +12,8 @@ export type Message =
   // 계획과 승인
   | {
       type: "plan_proposed";
+      areas: Area[];
+      sharedPaths: string[];
       units: UnitSpec[];
       cards: Card[];
       estimatedCalls: number;
@@ -18,6 +21,7 @@ export type Message =
   | { type: "plan_approved" }
   | { type: "plan_revision_requested"; feedback: string }
   // 준비
+  | { type: "register_areas"; areas: Area[]; sharedPaths: string[] }
   | { type: "register_units"; units: UnitSpec[] }
   | { type: "register_cards"; cards: Card[] }
   // 작업 진행

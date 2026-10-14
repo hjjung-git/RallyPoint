@@ -16,7 +16,8 @@ export const UNIT_STATUSES = ["idle", "working", "paused", "failed"] as const;
 
 export type UnitStatus = (typeof UNIT_STATUSES)[number];
 
-// 경로는 항상 "/"로 적는다. 예: "src/app.ts"
+// 범위 항목은 정확한 파일 경로("src/app.ts") 또는 "/"로 끝나는 폴더 접두어("src/")다.
+// 경로는 항상 "/"로 적는다.
 export interface WorkScope {
   read: string[];
   write: string[];
@@ -29,4 +30,7 @@ export interface UnitSpec {
   scope: WorkScope;
   permission: PermissionLevel;
   reportFormat: string;
+  // 소속 영역. builder는 반드시 영역 하나에 속한다.
+  // 그 밖의 유닛(reviewer, integrator 등)은 null이면 모든 영역에 걸쳐 일한다.
+  areaId: string | null;
 }

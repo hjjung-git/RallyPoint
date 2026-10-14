@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { Card, DashboardEvent, UnitSpec } from "@rallypoint/shared";
+import type {
+  Area,
+  Card,
+  DashboardEvent,
+  UnitSpec,
+} from "@rallypoint/shared";
 import { Board } from "./board.js";
 
 function makeCard(id: string, overrides: Partial<Card> = {}): Card {
@@ -13,6 +18,7 @@ function makeCard(id: string, overrides: Partial<Card> = {}): Card {
     dependsOn: [],
     doneCriteria: "",
     status: "todo",
+    areaId: "main",
     assignedUnitId: null,
     iteration: 1,
     ...overrides,
@@ -27,9 +33,17 @@ function makeUnit(id: string, overrides: Partial<UnitSpec> = {}): UnitSpec {
     scope: { read: [], write: [] },
     permission: "propose",
     reportFormat: "",
+    areaId: "main",
     ...overrides,
   };
 }
+
+const MAIN_AREA: Area = {
+  id: "main",
+  name: "main",
+  goal: "default area for tests",
+  scope: { read: [], write: [] },
+};
 
 function setup(maxConcurrent?: number) {
   const events: DashboardEvent[] = [];
@@ -37,6 +51,7 @@ function setup(maxConcurrent?: number) {
     maxConcurrent,
     onEvent: (event) => events.push(event),
   });
+  board.registerAreas([MAIN_AREA]);
   return { board, events };
 }
 

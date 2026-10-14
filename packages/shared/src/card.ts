@@ -15,6 +15,8 @@ export interface Card {
   title: string;
   description: string;
   unitKind: UnitKind;
+  // 카드가 속한 영역. null이면 영역에 걸치는 카드(전 영역 유닛이 가져간다).
+  areaId: string | null;
   scope: WorkScope;
   dependsOn: string[];
   doneCriteria: string;

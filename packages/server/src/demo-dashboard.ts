@@ -73,7 +73,7 @@ hub.observer.onPlan?.(plan);
 const decision = await hub.ask({ kind: "plan_review", plan });
 if (decision.kind !== "plan_review" || decision.decision.action !== "approve") {
   console.log("승인하지 않아 데모를 끝냅니다. 화면에서 '승인'을 누르면 진행 상황이 흘러갑니다.");
-  hub.observer.onEnd?.({ outcome: "cancelled", plan, message: null, totalCalls: 0, report: null, retrospective: null, usage: { inputTokens: 0, outputTokens: 0 } } as never);
+  hub.observer.onEnd?.({ outcome: "cancelled", plan, message: null, totalCalls: 0, report: null, retrospective: null, retrospectiveError: null, usage: { inputTokens: 0, outputTokens: 0 } } as never);
 } else {
   const board = new Board({ maxConcurrent: 3, onEvent: hub.onEvent });
   board.registerAreas(plan.areas, plan.sharedPaths);
@@ -130,6 +130,7 @@ if (decision.kind !== "plan_review" || decision.decision.action !== "approve") {
   hub.observer.onEnd?.({
     outcome: "finished", plan, message: null, totalCalls: calls,
     report: buildRunReport(board.getCards(), []),
+    retrospectiveError: null,
     retrospective: {
       summary: "모든 카드를 끝냈습니다. 충돌 한 번과 막힌 카드 한 번이 있었지만 사용자의 확인으로 이어서 진행했습니다.",
       wentWell: ["검토 유닛이 모든 카드를 승인 전에 확인했습니다."],

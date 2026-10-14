@@ -78,6 +78,8 @@ export interface SessionResult {
   report: RunReport | null;
   // 모델이 쓴 회고. 쓰지 않았거나 실패했으면 null이다.
   retrospective: Retrospective | null;
+  // 회고를 요청했는데 쓰지 못했을 때의 이유
+  retrospectiveError: string | null;
 }
 
 export interface DashboardSnapshot {

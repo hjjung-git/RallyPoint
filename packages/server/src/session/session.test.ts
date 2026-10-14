@@ -164,6 +164,7 @@ describe("runProject", () => {
 
     assert.equal(result.outcome, "finished");
     assert.equal(result.retrospective, null);
+    assert.ok(result.retrospectiveError?.includes("submit_retrospective"));
     assert.equal(result.report?.iterations.length, 1);
   });
 

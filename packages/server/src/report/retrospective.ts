@@ -5,7 +5,7 @@ import type { LlmClient, TokenUsage, ToolDefinition } from "../runner/llm.js";
 import { defaultSleep, retryDelayMs } from "../runner/runner.js";
 
 export const SUBMIT_RETROSPECTIVE = "submit_retrospective";
-export const RETROSPECTIVE_MAX_TOKENS = 2000;
+export const RETROSPECTIVE_MAX_TOKENS = 4000;
 export const RETROSPECTIVE_MAX_ATTEMPTS = 2;
 const MAX_ITEMS = 8;
 const MAX_ITEM_CHARS = 300;
@@ -91,15 +91,39 @@ function strings(value: unknown): string[] | null {
     .slice(0, MAX_ITEMS);
 }
 
-export function parseRetrospective(input: unknown): Retrospective | null {
-  if (typeof input !== "object" || input === null) return null;
+export type ParseRetrospectiveResult = { ok: true; retrospective: Retrospective } | { ok: false; message: string };
+
+// 어느 항목이 잘못됐는지 알려 주도록 자세히 읽는다.
+export function parseRetrospectiveDetailed(input: unknown): ParseRetrospectiveResult {
+  if (typeof input !== "object" || input === null) {
+    return { ok: false, message: "The retrospective was not an object." };
+  }
   const o = input as Record<string, unknown>;
-  if (typeof o.summary !== "string" || o.summary.trim() === "") return null;
-  const wentWell = strings(o.wentWell);
-  const problems = strings(o.problems);
-  const nextSteps = strings(o.nextSteps);
-  if (!wentWell || !problems || !nextSteps) return null;
-  return { summary: o.summary.trim().slice(0, 600), wentWell, problems, nextSteps };
+  if (typeof o.summary !== "string" || o.summary.trim() === "") {
+    return { ok: false, message: "The retrospective has no summary." };
+  }
+  const lists: Record<string, string[] | null> = {
+    wentWell: strings(o.wentWell),
+    problems: strings(o.problems),
+    nextSteps: strings(o.nextSteps),
+  };
+  for (const [name, value] of Object.entries(lists)) {
+    if (value === null) return { ok: false, message: `"${name}" must be an array of strings.` };
+  }
+  return {
+    ok: true,
+    retrospective: {
+      summary: o.summary.trim().slice(0, 600),
+      wentWell: lists.wentWell as string[],
+      problems: lists.problems as string[],
+      nextSteps: lists.nextSteps as string[],
+    },
+  };
+}
+
+export function parseRetrospective(input: unknown): Retrospective | null {
+  const parsed = parseRetrospectiveDetailed(input);
+  return parsed.ok ? parsed.retrospective : null;
 }
 
 // 회고는 부가 기능이라 실패해도 실행 결과를 해치지 않는다. 실패하면 이유만 돌려준다.
@@ -125,12 +149,18 @@ export async function writeRetrospective(
       });
       usage.inputTokens += response.usage.inputTokens;
       usage.outputTokens += response.usage.outputTokens;
-      const call = response.toolCalls.find((c) => c.name === SUBMIT_RETROSPECTIVE);
-      const parsed = call ? parseRetrospective(call.input) : null;
-      if (parsed) {
-        return { status: "ok", retrospective: parsed, usage, calls };
+      if (response.stopReason === "max_tokens") {
+        return { status: "failed", message: `The retrospective was cut off at ${RETROSPECTIVE_MAX_TOKENS} tokens.`, usage, calls };
       }
-      return { status: "failed", message: "The model did not return a usable retrospective.", usage, calls };
+      const call = response.toolCalls.find((c) => c.name === SUBMIT_RETROSPECTIVE);
+      if (!call) {
+        return { status: "failed", message: `The model did not call ${SUBMIT_RETROSPECTIVE}.`, usage, calls };
+      }
+      const parsed = parseRetrospectiveDetailed(call.input);
+      if (parsed.ok) {
+        return { status: "ok", retrospective: parsed.retrospective, usage, calls };
+      }
+      return { status: "failed", message: parsed.message, usage, calls };
     } catch (error) {
       if (error instanceof LlmError && error.retryable && attempt < maxAttempts) {
         await sleep(retryDelayMs(attempt));

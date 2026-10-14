@@ -157,6 +157,9 @@ try {
       for (const item of items) console.log(`  ${title}: ${item}`);
     }
   }
+  if (result.retrospectiveError) {
+    console.log(`\n회고를 쓰지 못했습니다: ${result.retrospectiveError}`);
+  }
   console.log(
     `모델 호출 ${result.totalCalls}회, 토큰 입력 ${result.usage.inputTokens} / 출력 ${result.usage.outputTokens}`,
   );

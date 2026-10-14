@@ -92,5 +92,15 @@ describe("writeRetrospective", () => {
     const bad = await writeRetrospective(new ScriptedClient([reply([])]), input, { sleep: noWait });
     assert.equal(bad.status, "failed");
     assert.equal(bad.calls, 1);
+    assert.ok(bad.status === "failed" && bad.message.includes(SUBMIT_RETROSPECTIVE));
+  });
+
+  it("says why a retrospective was rejected", async () => {
+    const wrong = reply([{ name: SUBMIT_RETROSPECTIVE, input: { ...good, problems: "x" } }]);
+    const result = await writeRetrospective(new ScriptedClient([wrong]), input, { sleep: noWait });
+    assert.ok(result.status === "failed" && result.message.includes('"problems"'));
+    const cut = { ...reply([]), stopReason: "max_tokens" as const };
+    const truncated = await writeRetrospective(new ScriptedClient([cut]), input, { sleep: noWait });
+    assert.ok(truncated.status === "failed" && truncated.message.includes("cut off"));
   });
 });

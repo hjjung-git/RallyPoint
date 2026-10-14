@@ -36,7 +36,7 @@ describe("labels", () => {
   });
 
   it("adds the message to a result sentence", () => {
-    const base = { totalCalls: 1, inputTokens: 1, outputTokens: 1, report: null, retrospective: null };
+    const base = { totalCalls: 1, inputTokens: 1, outputTokens: 1, report: null, retrospective: null, retrospectiveError: null };
     assert.equal(describeResult({ outcome: "finished", message: null, ...base }), "모든 카드를 끝냈습니다.");
     assert.match(describeResult({ outcome: "error", message: "폴더가 비어 있지 않음", ...base }), /폴더가 비어 있지 않음/);
   });

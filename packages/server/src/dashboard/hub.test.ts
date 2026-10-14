@@ -128,6 +128,7 @@ describe("DashboardHub snapshot", () => {
       usage: { inputTokens: 70, outputTokens: 7 },
       report: { iterations: [{ iteration: 1, cards: [], reviewRejections: 0, conflicts: 0, issues: 0 }] },
       retrospective: { summary: "s", wentWell: [], problems: [], nextSteps: [] },
+      retrospectiveError: null,
     });
     const snapshot = hub.getSnapshot();
     assert.equal(snapshot.phase, "ended");

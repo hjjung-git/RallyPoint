@@ -52,7 +52,9 @@ export function renderResult(root: HTMLElement, snapshot: DashboardSnapshot): vo
             ...section("문제", retro.problems),
             ...section("다음에 할 일", retro.nextSteps),
           ]
-        : []),
+        : snapshot.result.retrospectiveError
+          ? [html("p", { class: "muted" }, `회고를 쓰지 못했습니다: ${snapshot.result.retrospectiveError}`)]
+          : []),
     );
   }
 }

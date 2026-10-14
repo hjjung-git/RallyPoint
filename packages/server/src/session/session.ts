@@ -79,6 +79,8 @@ export interface ProjectResult {
   report: RunReport | null;
   // 모델이 쓴 회고. 요청하지 않았거나 쓰지 못했으면 null이다.
   retrospective: Retrospective | null;
+  // 회고를 요청했는데 쓰지 못했을 때의 이유
+  retrospectiveError: string | null;
 }
 
 // 시나리오에서 시작해 끝까지 잇는다: 작업 폴더 열기, 계획과 승인, 보드 등록, 실행, 문제 해결.
@@ -115,6 +117,7 @@ async function runProjectSteps(options: RunProjectOptions): Promise<ProjectResul
     message,
     report,
     retrospective: null,
+    retrospectiveError: null,
     totalCalls: planningCalls + (run?.totalCalls ?? 0),
     usage: {
       inputTokens: planningUsage.inputTokens + (run?.usage.inputTokens ?? 0),
@@ -189,6 +192,7 @@ async function runProjectSteps(options: RunProjectOptions): Promise<ProjectResul
     return {
       ...base,
       retrospective: written.status === "ok" ? written.retrospective : null,
+      retrospectiveError: written.status === "ok" ? null : written.message,
       totalCalls: base.totalCalls + written.calls,
       usage: {
         inputTokens: base.usage.inputTokens + written.usage.inputTokens,

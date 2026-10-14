@@ -388,4 +388,73 @@ describe("runCard", () => {
     assert.equal(client.requests.length, 0);
     assert.equal(result.attempts, 0);
   });
+  describe("review mode", () => {
+    const reviewerUnit = () => unit({ kind: "reviewer", permission: "read", scope: { read: ["src/"], write: [] } });
+
+    function review(verdict: string, findings: string[] = [], summary = "s"): LlmResponse {
+      return reply([{ name: "submit_review", input: { verdict, summary, findings } }]);
+    }
+
+    async function seed(): Promise<void> {
+      await workspace.applyChanges({
+        cardId: "c0",
+        changes: [{ path: "src/app.ts", baseVersion: 0, content: "export const x = 1;" }],
+        allowedWrite: ["src/"],
+      });
+    }
+
+    it("returns the verdict and shows the finished files", async () => {
+      await seed();
+      const client = new ScriptedClient([review("reject", ["no tests"], "missing tests")]);
+      const result = await runCard(client, workspace, reviewerUnit(), card(), { ...noSleep, review: true });
+
+      assert.equal(result.status, "reviewed");
+      if (result.status !== "reviewed") return;
+      assert.equal(result.verdict, "reject");
+      assert.equal(result.summary, "missing tests");
+      assert.deepEqual(result.findings, ["no tests"]);
+      const request = client.requests[0];
+      assert.deepEqual(request?.tools.map((t) => t.name), ["submit_review", "report_blocked"]);
+      assert.ok(request?.prompt.includes("You are reviewing the finished work"));
+      assert.ok(request?.prompt.includes("export const x = 1;"));
+      assert.ok(!request?.prompt.includes("Files you may write"));
+    });
+
+    it("never changes files in review mode", async () => {
+      const client = new ScriptedClient([review("approve")]);
+      await runCard(client, workspace, reviewerUnit(), card(), { ...noSleep, review: true });
+      assert.deepEqual(workspace.list(), []);
+    });
+
+    it("asks again when a rejection has no findings or the verdict is unknown", async () => {
+      const client = new ScriptedClient([review("reject", []), review("maybe"), review("approve")]);
+      const result = await runCard(client, workspace, reviewerUnit(), card(), { ...noSleep, review: true });
+
+      assert.equal(result.status, "reviewed");
+      assert.equal(result.attempts, 3);
+      assert.ok(client.requests[1]?.prompt.includes("needs at least one finding"));
+    });
+
+    it("does not offer the review tool when the card is worked on", async () => {
+      const client = new ScriptedClient([review("approve"), reply([propose([{ path: "src/a.ts", content: "x" }])])]);
+      const result = await runCard(client, workspace, unit(), card(), noSleep);
+      assert.equal(result.status, "completed");
+      assert.ok(client.requests[1]?.prompt.includes("not available"));
+    });
+
+    it("refuses to review with a unit that can write", async () => {
+      const client = new ScriptedClient([]);
+      await assert.rejects(
+        runCard(client, workspace, unit(), card(), { ...noSleep, review: true }),
+        /cannot review/,
+      );
+    });
+
+    it("shows reviewer feedback to the builder when it works again", async () => {
+      const client = new ScriptedClient([reply([propose([{ path: "src/a.ts", content: "x" }])])]);
+      await runCard(client, workspace, unit(), card(), { ...noSleep, feedback: "- add tests" });
+      assert.ok(client.requests[0]?.prompt.includes("rejected your previous work"));
+      assert.ok(client.requests[0]?.prompt.includes("- add tests"));
+    });
+  });
 });

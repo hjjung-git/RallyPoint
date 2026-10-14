@@ -15,6 +15,14 @@ export type DashboardEvent =
       kind: "blocked" | "failed" | "conflict";
       message: string;
     }
+  // 검토자 유닛의 판정
+  | {
+      type: "review_result";
+      cardId: string;
+      verdict: "approve" | "reject";
+      summary: string;
+      findings: string[];
+    }
   // 지금까지 모델 호출 횟수와 토큰 합계
   | {
       type: "usage_updated";

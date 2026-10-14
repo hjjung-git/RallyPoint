@@ -3,7 +3,11 @@ import type { ToolCall, ToolDefinition } from "./llm.js";
 
 export const PROPOSE_CHANGES = "propose_changes";
 export const SUBMIT_REPORT = "submit_report";
+export const SUBMIT_REVIEW = "submit_review";
 export const REPORT_BLOCKED = "report_blocked";
+
+// work: 카드의 일을 한다. review: 끝난 카드의 결과를 검토한다(읽기 전용 유닛만).
+export type ToolMode = "work" | "review";
 
 export interface ProposedFile {
   path: string;
@@ -13,6 +17,7 @@ export interface ProposedFile {
 export type ParsedOutput =
   | { kind: "changes"; summary: string; changes: ProposedFile[] }
   | { kind: "report"; summary: string }
+  | { kind: "review"; verdict: "approve" | "reject"; summary: string; findings: string[] }
   | { kind: "blocked"; reason: string }
   | { kind: "invalid"; message: string };
 
@@ -64,6 +69,26 @@ const submitReport: ToolDefinition = {
   },
 };
 
+const submitReview: ToolDefinition = {
+  name: SUBMIT_REVIEW,
+  description:
+    "Submit your verdict on the finished work of this card. Approve only if the files shown meet " +
+    "the done criteria. If you reject, list concrete findings the builder can act on.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      verdict: { type: "string", enum: ["approve", "reject"] },
+      summary: { type: "string", description: "Short reason for the verdict." },
+      findings: {
+        type: "array",
+        items: { type: "string" },
+        description: "What must be fixed. Required when rejecting.",
+      },
+    },
+    required: ["verdict", "summary", "findings"],
+  },
+};
+
 const reportBlocked: ToolDefinition = {
   name: REPORT_BLOCKED,
   description:
@@ -79,7 +104,13 @@ const reportBlocked: ToolDefinition = {
 };
 
 // 권한에 따라 쓸 수 있는 도구가 다르다. 읽기 전용 유닛에는 파일을 바꾸는 도구 자체를 주지 않는다.
-export function toolsFor(permission: PermissionLevel): ToolDefinition[] {
+export function toolsFor(
+  permission: PermissionLevel,
+  mode: ToolMode = "work",
+): ToolDefinition[] {
+  if (mode === "review") {
+    return [submitReview, reportBlocked];
+  }
   return permission === "propose"
     ? [proposeChanges, reportBlocked]
     : [submitReport, reportBlocked];
@@ -89,6 +120,7 @@ export function toolsFor(permission: PermissionLevel): ToolDefinition[] {
 export function parseToolCalls(
   permission: PermissionLevel,
   calls: ToolCall[],
+  mode: ToolMode = "work",
 ): ParsedOutput {
   if (calls.length !== 1) {
     return {
@@ -97,7 +129,7 @@ export function parseToolCalls(
     };
   }
   const call = calls[0];
-  const allowed = toolsFor(permission).map((tool) => tool.name);
+  const allowed = toolsFor(permission, mode).map((tool) => tool.name);
   if (!allowed.includes(call.name)) {
     return {
       kind: "invalid",
@@ -120,6 +152,24 @@ export function parseToolCalls(
   }
   if (call.name === SUBMIT_REPORT) {
     return { kind: "report", summary: input.summary };
+  }
+
+  if (call.name === SUBMIT_REVIEW) {
+    const verdict = input.verdict;
+    if (verdict !== "approve" && verdict !== "reject") {
+      return { kind: "invalid", message: '"verdict" must be "approve" or "reject".' };
+    }
+    if (
+      !Array.isArray(input.findings) ||
+      !(input.findings as unknown[]).every((f) => typeof f === "string" && f.trim() !== "")
+    ) {
+      return { kind: "invalid", message: '"findings" must be an array of non-empty strings.' };
+    }
+    const findings = input.findings as string[];
+    if (verdict === "reject" && findings.length === 0) {
+      return { kind: "invalid", message: "A rejection needs at least one finding." };
+    }
+    return { kind: "review", verdict, summary: input.summary, findings };
   }
 
   // propose_changes

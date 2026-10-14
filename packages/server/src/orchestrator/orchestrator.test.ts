@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import type { Area, Card, DashboardEvent, UnitSpec } from "@rallypoint/shared";
 import { Board } from "../board/board.js";
 import { LlmError } from "../runner/llm.js";
+import type { LlmResponse } from "../runner/llm.js";
 import { ScriptedClient, propose, reply } from "../runner/scripted-client.js";
 import type { ScriptedStep } from "../runner/scripted-client.js";
 import { Workspace } from "../workspace/workspace.js";
@@ -63,6 +64,12 @@ function file(path: string, content = "x") {
   return reply([propose([{ path, content }])]);
 }
 
+function verdict(value: "approve" | "reject", findings: string[] = []): LlmResponse {
+  return reply([
+    { name: "submit_review", input: { verdict: value, summary: `${value}d`, findings } },
+  ]);
+}
+
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe("Orchestrator", () => {
@@ -79,16 +86,18 @@ describe("Orchestrator", () => {
   });
 
   function setup(options: {
+    areas?: Area[];
     units: UnitSpec[];
     cards: Card[];
     steps: ScriptedStep[];
     maxConcurrent?: number;
     maxConflictRetries?: number;
+    maxReviewRejections?: number;
   }) {
     const events: DashboardEvent[] = [];
     const onEvent = (event: DashboardEvent) => events.push(event);
     const board = new Board({ maxConcurrent: options.maxConcurrent, onEvent });
-    board.registerAreas([AREA]);
+    board.registerAreas(options.areas ?? [AREA]);
     board.registerUnits(options.units);
     board.registerCards(options.cards);
     const client = new ScriptedClient(options.steps);
@@ -100,6 +109,7 @@ describe("Orchestrator", () => {
       onEvent,
       runOptions: { sleep: async () => {} },
       maxConflictRetries: options.maxConflictRetries,
+      maxReviewRejections: options.maxReviewRejections,
     });
     return { board, events, client, orchestrator };
   }
@@ -158,34 +168,186 @@ describe("Orchestrator", () => {
     assert.ok(board.getCards().every((c) => c.status === "done"));
   });
 
-  it("sends changed cards to review when a reviewer unit exists, then approve finishes", async () => {
+  it("has a reviewer unit review changed cards and finishes when approved", async () => {
+    const { board, events, client, orchestrator } = setup({
+      units: [builder("u1"), reviewer("r1")],
+      cards: [card("c1")],
+      steps: [file("src/a.ts"), verdict("approve")],
+    });
+    const summary = await orchestrator.run();
+
+    assert.equal(summary.outcome, "finished");
+    assert.equal(board.getCard("c1")?.status, "done");
+    assert.equal(summary.totalCalls, 2);
+    assert.deepEqual(
+      client.requests[1]?.tools.map((t) => t.name),
+      ["submit_review", "report_blocked"],
+    );
+    assert.ok(client.requests[1]?.prompt.includes('<file path="src/a.ts"'));
+    assert.ok(events.some((e) => e.type === "review_result" && e.verdict === "approve"));
+    assert.ok(
+      events.some((e) => e.type === "unit_status_changed" && e.unitId === "r1" && e.status === "working"),
+    );
+    assert.ok(
+      events.some((e) => e.type === "unit_status_changed" && e.unitId === "r1" && e.status === "idle"),
+    );
+  });
+
+  it("sends a rejected card back with the findings and reviews it again", async () => {
+    const { board, client, orchestrator } = setup({
+      units: [builder("u1"), reviewer("r1")],
+      cards: [card("c1")],
+      steps: [
+        file("src/a.ts", "v1"),
+        verdict("reject", ["add input validation", "name the function"]),
+        file("src/a.ts", "v2"),
+        verdict("approve"),
+      ],
+    });
+    const summary = await orchestrator.run();
+
+    assert.equal(summary.outcome, "finished");
+    assert.equal(workspace.read("src/a.ts").content, "v2");
+    assert.equal(board.getCard("c1")?.status, "done");
+    const retryPrompt = client.requests[2]?.prompt ?? "";
+    assert.ok(retryPrompt.includes("- add input validation"));
+    assert.ok(retryPrompt.includes("- name the function"));
+    // 승인된 뒤에는 지적이 남지 않는다.
+    assert.ok(!(client.requests[0]?.prompt ?? "").includes("add input validation"));
+  });
+
+  it("counts reviews against the concurrency limit", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const slow = (response: LlmResponse): ScriptedStep => async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await delay(10);
+      active -= 1;
+      return response;
+    };
+    const { board, orchestrator } = setup({
+      units: [builder("u1"), builder("u2"), reviewer("r1")],
+      cards: [card("c1"), card("c2")],
+      steps: [
+        slow(file("src/a.ts")),
+        slow(file("src/b.ts")),
+        slow(verdict("approve")),
+        slow(verdict("approve")),
+      ],
+      maxConcurrent: 1,
+    });
+    const summary = await orchestrator.run();
+
+    assert.equal(summary.outcome, "finished");
+    assert.equal(maxActive, 1);
+    assert.ok(board.getCards().every((c) => c.status === "done"));
+  });
+
+  it("blocks the card and pauses when it is rejected too many times", async () => {
+    const { board, events, orchestrator } = setup({
+      units: [builder("u1"), reviewer("r1")],
+      cards: [card("c1")],
+      steps: [
+        file("src/a.ts", "1"),
+        verdict("reject", ["bad"]),
+        file("src/a.ts", "2"),
+        verdict("reject", ["still bad"]),
+      ],
+      maxReviewRejections: 1,
+    });
+    const summary = await orchestrator.run();
+
+    assert.equal(summary.outcome, "paused");
+    assert.equal(board.getCard("c1")?.status, "blocked");
+    const issue = events.find((e) => e.type === "issue_raised");
+    assert.ok(issue && issue.type === "issue_raised");
+    assert.match(issue.message, /Rejected 2 times.*still bad/);
+  });
+
+  it("turns a failed review call into a blocked card and a user alert", async () => {
+    const { board, events, orchestrator } = setup({
+      units: [builder("u1"), reviewer("r1")],
+      cards: [card("c1")],
+      steps: [file("src/a.ts"), new LlmError("invalid api key", false)],
+    });
+    const summary = await orchestrator.run();
+
+    assert.equal(summary.outcome, "paused");
+    assert.equal(board.getCard("c1")?.status, "blocked");
+    const issue = events.find((e) => e.type === "issue_raised");
+    assert.ok(issue && issue.type === "issue_raised");
+    assert.equal(issue.kind, "failed");
+  });
+
+  it("blocks the card when the reviewer says it cannot review", async () => {
+    const { board, events, orchestrator } = setup({
+      units: [builder("u1"), reviewer("r1")],
+      cards: [card("c1")],
+      steps: [
+        file("src/a.ts"),
+        reply([{ name: "report_blocked", input: { reason: "files unreadable" } }]),
+      ],
+    });
+    await orchestrator.run();
+
+    assert.equal(board.getCard("c1")?.status, "blocked");
+    const issue = events.find((e) => e.type === "issue_raised");
+    assert.ok(issue && issue.type === "issue_raised");
+    assert.match(issue.message, /Review could not be done: files unreadable/);
+  });
+
+  it("skips review when no reviewer covers the card's area", async () => {
+    const other: Area = { id: "other", name: "other", goal: "x", scope: { read: [], write: ["lib/"] } };
+    const otherReviewer: UnitSpec = { ...reviewer("r1"), areaId: "other" };
+    const { board, client, orchestrator } = setup({
+      areas: [AREA, other],
+      units: [builder("u1"), otherReviewer],
+      cards: [card("c1")],
+      steps: [file("src/a.ts")],
+    });
+    const summary = await orchestrator.run();
+
+    assert.equal(summary.outcome, "finished");
+    assert.equal(board.getCard("c1")?.status, "done");
+    assert.equal(client.requests.length, 1);
+  });
+
+  it("has an area reviewer review only its own area's cards", async () => {
+    const other: Area = { id: "other", name: "other", goal: "x", scope: { read: [], write: ["lib/"] } };
+    const mainReviewer: UnitSpec = { ...reviewer("r1"), areaId: "main" };
+    const otherBuilder: UnitSpec = {
+      ...builder("u2"),
+      areaId: "other",
+      scope: { read: ["lib/"], write: ["lib/"] },
+    };
+    const { board, orchestrator } = setup({
+      areas: [AREA, other],
+      units: [builder("u1"), otherBuilder, mainReviewer],
+      cards: [
+        card("c1"),
+        card("c2", { areaId: "other", scope: { read: [], write: ["lib/"] } }),
+      ],
+      steps: [file("src/a.ts"), file("lib/b.ts"), verdict("approve")],
+    });
+    const summary = await orchestrator.run();
+
+    assert.equal(summary.outcome, "finished");
+    assert.equal(board.getCard("c2")?.status, "done");
+    assert.equal(summary.totalCalls, 3);
+  });
+
+  it("lets the user approve a card that is stuck in review", async () => {
     const { board, orchestrator } = setup({
       units: [builder("u1"), reviewer("r1")],
       cards: [card("c1")],
       steps: [file("src/a.ts")],
     });
-    const first = await orchestrator.run();
-    assert.equal(first.outcome, "awaiting_review");
-    assert.equal(board.getCard("c1")?.status, "review");
-
+    // 검토자 유닛이 모두 일하지 못하는 상황을 흉내 내려고 보드에서 직접 검토 상태로 만든다.
+    board.assign("u1");
+    board.move("c1", "review");
     orchestrator.approveReview("c1");
-    const second = await orchestrator.run();
-    assert.equal(second.outcome, "finished");
-  });
-
-  it("returns a rejected review to todo and runs it again", async () => {
-    const { board, orchestrator } = setup({
-      units: [builder("u1"), reviewer("r1")],
-      cards: [card("c1")],
-      steps: [file("src/a.ts", "v1"), file("src/a.ts", "v2")],
-    });
-    await orchestrator.run();
-    orchestrator.rejectReview("c1");
-    const summary = await orchestrator.run();
-
-    assert.equal(summary.outcome, "awaiting_review");
-    assert.equal(workspace.read("src/a.ts").content, "v2");
-    assert.equal(board.getCard("c1")?.status, "review");
+    assert.equal(board.getCard("c1")?.status, "done");
   });
 
   it("refuses approve or reject for a card that is not in review", async () => {

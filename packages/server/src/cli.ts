@@ -1,7 +1,7 @@
 // 시나리오 파일로 RallyPoint를 실행한다.
 // 실행: npm run rally -- scenarios/sample-todo-cli.md <빈 작업 폴더>
 import { createInterface } from "node:readline/promises";
-import type { Card, DashboardEvent, Plan } from "@rallypoint/shared";
+import type { DashboardEvent, Plan } from "@rallypoint/shared";
 import { createAnthropicClient } from "./runner/anthropic-client.js";
 import { loadScenario } from "./scenario/scenario.js";
 import { runProject } from "./session/session.js";
@@ -72,18 +72,20 @@ const interaction: Interaction = {
     const input = (await rl.question("다시 시도하려면 r, 멈추려면 s\n> ")).trim().toLowerCase();
     return input === "r" ? "retry" : "stop";
   },
-
-  // 검토자 유닛이 결과를 구조화해서 내는 단계가 생기기 전까지는 자동으로 승인한다.
-  async reviewCard(card: Card): Promise<"approve" | "reject"> {
-    console.log(`검토 대기 카드 ${card.id}: 자동 승인`);
-    return "approve";
-  },
 };
 
 function printEvent(event: DashboardEvent): void {
   switch (event.type) {
     case "card_moved":
       console.log(`  카드 ${event.cardId}: ${event.from} → ${event.to}`);
+      break;
+    case "review_result":
+      console.log(
+        `  검토 ${event.cardId}: ${event.verdict === "approve" ? "승인" : "반려"} - ${event.summary}`,
+      );
+      for (const finding of event.findings) {
+        console.log(`    · ${finding}`);
+      }
       break;
     case "conflict_detected":
       console.log(`  충돌: ${event.path} (카드 ${event.cardIds.join(", ")})`);

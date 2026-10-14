@@ -19,7 +19,7 @@ export const DEFAULT_MAX_CONCURRENT = 2;
 const ALLOWED_MOVES: Record<CardStatus, CardStatus[]> = {
   todo: [],
   in_progress: ["review", "done", "blocked", "todo"],
-  review: ["done", "todo"],
+  review: ["done", "todo", "blocked"],
   blocked: ["todo"],
   done: [],
 };
@@ -242,6 +242,10 @@ export class Board {
         status: "idle",
       });
     }
+  }
+
+  getMaxConcurrent(): number {
+    return this.maxConcurrent;
   }
 
   pause(reason: string): void {

@@ -4,6 +4,7 @@ import type { Workspace } from "../workspace/workspace.js";
 import { LlmError } from "./llm.js";
 import type { LlmClient, TokenUsage } from "./llm.js";
 import { parseToolCalls, toolsFor } from "./tools.js";
+import type { ToolMode } from "./tools.js";
 
 export const DEFAULT_MAX_TOKENS = 8192;
 export const DEFAULT_MAX_ATTEMPTS = 3;
@@ -17,6 +18,10 @@ export interface RunOptions {
   maxContextChars?: number;
   // 재시도 전 대기. 테스트에서 바꿔 끼운다.
   sleep?: (ms: number) => Promise<void>;
+  // true이면 카드의 일을 하는 대신, 끝난 카드의 결과를 검토한다(읽기 전용 유닛만).
+  review?: boolean;
+  // 이전에 검토자가 반려하며 남긴 지적. 일을 다시 할 때 보여 준다.
+  feedback?: string;
 }
 
 export type RunFailureKind =
@@ -36,6 +41,14 @@ export type RunResult =
       attempts: number;
     }
   | { status: "blocked"; reason: string; usage: TokenUsage; attempts: number }
+  | {
+      status: "reviewed";
+      verdict: "approve" | "reject";
+      summary: string;
+      findings: string[];
+      usage: TokenUsage;
+      attempts: number;
+    }
   | {
       status: "conflict";
       path: string | null;
@@ -69,6 +82,11 @@ export async function runCard(
   const maxContextChars = options.maxContextChars ?? DEFAULT_MAX_CONTEXT_CHARS;
   const sleep = options.sleep ?? defaultSleep;
 
+  const mode: ToolMode = options.review ? "review" : "work";
+  if (mode === "review" && unit.permission !== "read") {
+    throw new Error(`Unit ${unit.id} cannot review: only read-only units can`);
+  }
+
   const usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
   let attempts = 0;
   const fail = (failure: RunFailureKind, message: string): RunResult => ({
@@ -99,13 +117,13 @@ export async function runCard(
 
   // 2. 쓰기 범위는 카드 범위와 유닛 범위의 교집합이다.
   const allowedWrite =
-    unit.permission === "propose"
+    unit.permission === "propose" && mode === "work"
       ? card.scope.write.filter((entry) => isCoveredByAny(entry, unit.scope.write))
       : [];
 
-  const system = buildSystem(unit);
-  const basePrompt = buildPrompt(card, sections, allowedWrite);
-  const tools = toolsFor(unit.permission);
+  const system = buildSystem(unit, mode);
+  const basePrompt = buildPrompt(card, sections, allowedWrite, mode, options.feedback);
+  const tools = toolsFor(unit.permission, mode);
 
   // 3. 호출하고, 실패나 형식 오류는 정해진 횟수까지 다시 시도한다.
   let feedback: string | null = null;
@@ -136,7 +154,7 @@ export async function runCard(
       return fail("truncated", `The answer was cut off at ${maxTokens} tokens.`);
     }
 
-    const parsed = parseToolCalls(unit.permission, response.toolCalls);
+    const parsed = parseToolCalls(unit.permission, response.toolCalls, mode);
     if (parsed.kind === "invalid") {
       if (attempts >= maxAttempts) {
         return fail("invalid_output", parsed.message);
@@ -149,6 +167,17 @@ export async function runCard(
     }
     if (parsed.kind === "report") {
       return { status: "completed", summary: parsed.summary, versions: {}, usage, attempts };
+    }
+
+    if (parsed.kind === "review") {
+      return {
+        status: "reviewed",
+        verdict: parsed.verdict,
+        summary: parsed.summary,
+        findings: parsed.findings,
+        usage,
+        attempts,
+      };
     }
 
     // 변경안: baseVersion은 보여준 시점의 버전. 보여준 적 없는 파일(새 파일)은 0이다.
@@ -195,7 +224,7 @@ function listVisibleFiles(workspace: Workspace, card: Card): string[] {
   return workspace.list().filter((path) => isCoveredByAny(path, entries));
 }
 
-function buildSystem(unit: UnitSpec): string {
+function buildSystem(unit: UnitSpec, mode: ToolMode): string {
   const access =
     unit.permission === "propose"
       ? "You may propose file changes, which the system validates and applies."
@@ -210,19 +239,39 @@ function buildSystem(unit: UnitSpec): string {
     '- Use relative paths with "/" separators and stay inside your write scope.',
     "- Work only on the card you are given; do not do other cards' work.",
     "- If the card cannot be done as written, use report_blocked instead of guessing.",
+    ...(mode === "review"
+      ? ["- You are the reviewer: judge strictly against the done criteria and approve only if every one is met by the files shown."]
+      : []),
   ].join("\n");
 }
 
-function buildPrompt(card: Card, files: string[], allowedWrite: string[]): string {
+function buildPrompt(
+  card: Card,
+  files: string[],
+  allowedWrite: string[],
+  mode: ToolMode,
+  feedback: string | undefined,
+): string {
   const parts = [
     `Card ${card.id}: ${card.title}`,
     `Description:\n${card.description}`,
     `Done criteria:\n${card.doneCriteria}`,
-    `Files you may write: ${allowedWrite.length > 0 ? allowedWrite.join(", ") : "(none)"}`,
+  ];
+  if (mode === "review") {
+    parts.push(
+      "You are reviewing the finished work for this card. Check the files below against the description and done criteria.",
+    );
+  } else {
+    parts.push(`Files you may write: ${allowedWrite.length > 0 ? allowedWrite.join(", ") : "(none)"}`);
+    if (feedback) {
+      parts.push(`A reviewer rejected your previous work with these findings. Fix them:\n${feedback}`);
+    }
+  }
+  parts.push(
     files.length > 0
       ? `Current files:\n${files.join("\n")}`
       : "There are no existing files in your scope yet.",
-  ];
+  );
   return parts.join("\n\n");
 }
 

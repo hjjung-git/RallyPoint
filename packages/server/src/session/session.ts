@@ -1,4 +1,4 @@
-import type { Card, DashboardEvent, Plan } from "@rallypoint/shared";
+import type { DashboardEvent, Plan } from "@rallypoint/shared";
 import { Board } from "../board/board.js";
 import { Orchestrator } from "../orchestrator/orchestrator.js";
 import { planProject } from "../planner/planner.js";
@@ -22,12 +22,12 @@ export interface IssueInfo {
 }
 
 // 사용자와 주고받는 부분. CLI에서는 터미널로, 나중에는 대시보드로 구현한다.
+// 카드 검토는 reviewer 유닛이 하므로 여기에는 없다.
 export interface Interaction {
   // 질문 순서대로 답을 돌려준다.
   answerQuestions(questions: string[]): Promise<string[]>;
   reviewPlan(plan: Plan): Promise<PlanDecision>;
   resolveIssue(issue: IssueInfo): Promise<"retry" | "stop">;
-  reviewCard(card: Card): Promise<"approve" | "reject">;
 }
 
 export interface RunProjectOptions {
@@ -154,18 +154,6 @@ export async function runProject(options: RunProjectOptions): Promise<ProjectRes
 
     if (summary.outcome === "finished") {
       return result("finished", plan, null, run);
-    }
-
-    if (summary.outcome === "awaiting_review") {
-      for (const card of board.getCards().filter((c) => c.status === "review")) {
-        const verdict = await interaction.reviewCard(card);
-        if (verdict === "approve") {
-          orchestrator.approveReview(card.id);
-        } else {
-          orchestrator.rejectReview(card.id);
-        }
-      }
-      continue;
     }
 
     if (summary.outcome === "paused") {

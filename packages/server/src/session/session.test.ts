@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import type { Card, DashboardEvent, Plan } from "@rallypoint/shared";
+import type { DashboardEvent, Plan } from "@rallypoint/shared";
 import { rawPlan } from "../planner/plan-fixture.js";
 import { LlmError } from "../runner/llm.js";
 import type { ToolCall } from "../runner/llm.js";
@@ -35,19 +35,23 @@ function submit(input: unknown): ToolCall {
 const writeTypes: ScriptedStep = reply([propose([{ path: "src/shared/types.ts", content: "export type A = 1;\n" }])]);
 const writePage: ScriptedStep = reply([propose([{ path: "src/web/page.ts", content: "export {};\n" }])]);
 
+function verdict(value: "approve" | "reject", findings: string[] = []): ScriptedStep {
+  return reply([
+    { name: "submit_review", input: { verdict: value, summary: value, findings } },
+  ]);
+}
+
 // 질문에 대한 답을 미리 정해 두는 가짜 사용자
 class ScriptedUser implements Interaction {
   readonly planReviews: Plan[] = [];
   readonly issues: IssueInfo[] = [];
   readonly asked: string[][] = [];
-  readonly reviewed: string[] = [];
 
   constructor(
     private readonly script: {
       answers?: string[];
       plans?: PlanDecision[];
       issues?: ("retry" | "stop")[];
-      reviews?: ("approve" | "reject")[];
     } = {},
   ) {}
 
@@ -64,11 +68,6 @@ class ScriptedUser implements Interaction {
   async resolveIssue(issue: IssueInfo): Promise<"retry" | "stop"> {
     this.issues.push(issue);
     return this.script.issues?.shift() ?? "retry";
-  }
-
-  async reviewCard(card: Card): Promise<"approve" | "reject"> {
-    this.reviewed.push(card.id);
-    return this.script.reviews?.shift() ?? "approve";
   }
 }
 
@@ -106,15 +105,14 @@ describe("runProject", () => {
   it("goes from scenario to finished files, with reviews and combined usage", async () => {
     const user = new ScriptedUser();
     const { client, promise } = start(
-      [reply([submit(plan(true))], 100, 50), writeTypes, writePage],
+      [reply([submit(plan(true))], 100, 50), writeTypes, verdict("approve"), writePage, verdict("approve")],
       user,
     );
     const result = await promise;
 
     assert.equal(result.outcome, "finished");
-    assert.equal(result.totalCalls, 3);
-    assert.deepEqual(result.usage, { inputTokens: 120, outputTokens: 60 });
-    assert.deepEqual(user.reviewed.sort(), ["c1", "c2"]);
+    assert.equal(result.totalCalls, 5);
+    assert.deepEqual(result.usage, { inputTokens: 140, outputTokens: 70 });
     assert.equal(await readFile(join(workDir, "src", "shared", "types.ts"), "utf8"), "export type A = 1;\n");
     assert.equal(await readFile(join(workDir, "src", "web", "page.ts"), "utf8"), "export {};\n");
     assert.ok(client.requests[0]?.prompt.includes("Build a small site"));
@@ -125,7 +123,7 @@ describe("runProject", () => {
     const { promise } = start([reply([submit(plan(false))]), writeTypes, writePage], user);
     const result = await promise;
     assert.equal(result.outcome, "finished");
-    assert.deepEqual(user.reviewed, []);
+    assert.equal(result.totalCalls, 3);
   });
 
   it("asks the user's answers into the plan request", async () => {
@@ -247,14 +245,17 @@ describe("runProject", () => {
     assert.match(result.message ?? "", /c1/);
   });
 
-  it("runs a rejected review again", async () => {
-    const user = new ScriptedUser({ reviews: ["reject", "approve", "approve"] });
-    const { promise } = start(
+  it("runs a card again after the reviewer rejects it", async () => {
+    const user = new ScriptedUser();
+    const { client, promise } = start(
       [
         reply([submit(plan(true))]),
         writeTypes,
+        verdict("reject", ["use a union type"]),
         reply([propose([{ path: "src/shared/types.ts", content: "export type A = 2;\n" }])]),
+        verdict("approve"),
         writePage,
+        verdict("approve"),
       ],
       user,
     );
@@ -262,6 +263,7 @@ describe("runProject", () => {
 
     assert.equal(result.outcome, "finished");
     assert.equal(await readFile(join(workDir, "src", "shared", "types.ts"), "utf8"), "export type A = 2;\n");
+    assert.ok(client.requests[3]?.prompt.includes("- use a union type"));
   });
 
   it("passes board events to the caller", async () => {

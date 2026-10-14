@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { DashboardEvent } from "@rallypoint/shared";
-import { describeEvent, describeResult, formatClock, truncate } from "./labels.js";
+import { describeEvent, describeIteration, describeResult, formatClock, truncate } from "./labels.js";
 
 describe("labels", () => {
   it("describes every kind of event in a sentence", () => {
@@ -36,8 +36,25 @@ describe("labels", () => {
   });
 
   it("adds the message to a result sentence", () => {
-    const base = { totalCalls: 1, inputTokens: 1, outputTokens: 1 };
+    const base = { totalCalls: 1, inputTokens: 1, outputTokens: 1, report: null, retrospective: null };
     assert.equal(describeResult({ outcome: "finished", message: null, ...base }), "모든 카드를 끝냈습니다.");
     assert.match(describeResult({ outcome: "error", message: "폴더가 비어 있지 않음", ...base }), /폴더가 비어 있지 않음/);
+  });
+});
+
+describe("describeIteration (UI copy)", () => {
+  it("matches the shared description", async () => {
+    const shared = await import("@rallypoint/shared");
+    const report = {
+      iteration: 1,
+      cards: [
+        { id: "a", title: "a", status: "done" as const },
+        { id: "b", title: "b", status: "blocked" as const },
+      ],
+      reviewRejections: 1,
+      conflicts: 2,
+      issues: 0,
+    };
+    assert.equal(describeIteration(report), shared.describeIteration(report));
   });
 });

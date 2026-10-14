@@ -112,6 +112,8 @@ textarea { width: 100%; border: 1px solid var(--line); border-radius: 8px; paddi
 .muted { color: var(--slate); font-size: 12.5px; }
 .result-text { font-weight: 600; margin: 0 0 6px; }
 .iteration { margin: 0 0 4px; font-size: 13px; }
+#result h3 { font-size: 13px; margin: 12px 0 4px; }
+#result ul { margin: 0; padding-left: 18px; font-weight: 400; }
 #issues { margin: 0; padding-left: 18px; color: #7C1F1F; }
 #log { list-style: none; margin: 0; padding: 0; font-size: 12.5px; max-height: 320px; overflow: auto; }
 #log li { padding: 3px 0; border-bottom: 1px solid var(--paper); }

@@ -1,7 +1,6 @@
-import { describeIteration } from "@rallypoint/shared";
 import type { DashboardSnapshot, Plan, Prompt, PromptReply } from "@rallypoint/shared";
 import { html, setText } from "./dom.js";
-import { PHASE_LABEL, describeEvent, describeResult, formatClock, formatCount, truncate } from "./labels.js";
+import { PHASE_LABEL, describeEvent, describeIteration, describeResult, formatClock, formatCount, truncate } from "./labels.js";
 
 // 사용자 답을 서버로 보내는 함수. 실패하면 화면에 보여 줄 문장을 돌려주고, 성공하면 null이다.
 export type SendReply = (reply: PromptReply) => Promise<string | null>;
@@ -39,7 +38,22 @@ export function renderResult(root: HTMLElement, snapshot: DashboardSnapshot): vo
   root.hidden = snapshot.result === null;
   if (snapshot.result) {
     const lines = (snapshot.result.report?.iterations ?? []).map((r) => html("p", { class: "iteration" }, describeIteration(r)));
-    root.replaceChildren(html("p", { class: "result-text" }, describeResult(snapshot.result)), ...lines);
+    const retro = snapshot.result.retrospective;
+    const section = (title: string, items: string[]): Node[] =>
+      items.length === 0 ? [] : [html("h3", {}, title), html("ul", {}, ...items.map((item) => html("li", {}, item)))];
+    root.replaceChildren(
+      html("p", { class: "result-text" }, describeResult(snapshot.result)),
+      ...lines,
+      ...(retro
+        ? [
+            html("h3", {}, "회고"),
+            html("p", {}, retro.summary),
+            ...section("잘된 점", retro.wentWell),
+            ...section("문제", retro.problems),
+            ...section("다음에 할 일", retro.nextSteps),
+          ]
+        : []),
+    );
   }
 }
 

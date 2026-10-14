@@ -1,4 +1,4 @@
-import type { CardStatus, DashboardEvent, SessionPhase, SessionResult, UnitStatus } from "@rallypoint/shared";
+import type { CardStatus, IterationReport, DashboardEvent, SessionPhase, SessionResult, UnitStatus } from "@rallypoint/shared";
 
 export const CARD_STATUS_LABEL: Record<CardStatus, string> = {
   todo: "대기",
@@ -77,4 +77,18 @@ export function formatClock(iso: string): string {
 
 export function formatCount(value: number): string {
   return value.toLocaleString("ko-KR");
+}
+
+// 브라우저는 @rallypoint/shared를 불러올 수 없어서(값 import 불가) shared의 describeIteration과 같은 문장을 여기서 만든다.
+export function describeIteration(report: IterationReport): string {
+  const done = report.cards.filter((c) => c.status === "done").length;
+  const parts = [`반복 ${report.iteration}: 카드 ${report.cards.length}개 중 ${done}개 완료`];
+  const notes: string[] = [];
+  if (report.reviewRejections > 0) notes.push(`검토 반려 ${report.reviewRejections}회`);
+  if (report.conflicts > 0) notes.push(`충돌 ${report.conflicts}회`);
+  if (report.issues > 0) notes.push(`문제 ${report.issues}회`);
+  if (notes.length > 0) parts.push(`(${notes.join(", ")})`);
+  const open = report.cards.filter((c) => c.status !== "done").map((c) => `${c.id}(${c.status})`);
+  if (open.length > 0) parts.push(`미완료: ${open.join(", ")}`);
+  return parts.join(" ");
 }

@@ -11,7 +11,7 @@ import { ScriptedClient, propose, reply } from "../runner/scripted-client.js";
 import type { ScriptedStep } from "../runner/scripted-client.js";
 import type { Scenario } from "../scenario/scenario.js";
 import { runProject } from "./session.js";
-import type { Interaction, IssueInfo, PlanDecision } from "./session.js";
+import type { Interaction, IssueInfo, PlanDecision, RunProjectOptions } from "./session.js";
 
 const scenario: Scenario = {
   title: "t",
@@ -88,6 +88,7 @@ describe("runProject", () => {
     steps: ScriptedStep[],
     user: Interaction,
     onEvent?: (event: DashboardEvent) => void,
+    extra: Partial<RunProjectOptions> = {},
   ) {
     const client = new ScriptedClient(steps);
     const promise = runProject({
@@ -98,6 +99,7 @@ describe("runProject", () => {
       onEvent,
       plannerOptions: { sleep: async () => {} },
       runOptions: { sleep: async () => {} },
+      ...extra,
     });
     return { client, promise };
   }
@@ -113,9 +115,56 @@ describe("runProject", () => {
     assert.equal(result.outcome, "finished");
     assert.equal(result.totalCalls, 5);
     assert.deepEqual(result.usage, { inputTokens: 140, outputTokens: 70 });
+    assert.equal(result.report?.iterations.length, 1);
+    assert.equal(result.report?.iterations[0]?.cards.every((c) => c.status === "done"), true);
     assert.equal(await readFile(join(workDir, "src", "shared", "types.ts"), "utf8"), "export type A = 1;\n");
     assert.equal(await readFile(join(workDir, "src", "web", "page.ts"), "utf8"), "export {};\n");
     assert.ok(client.requests[0]?.prompt.includes("Build a small site"));
+  });
+
+  it("adds a model-written retrospective when asked, counting its call", async () => {
+    const retro = reply(
+      [{ name: "submit_retrospective", input: { summary: "ok", wentWell: ["a"], problems: [], nextSteps: ["b"] } }],
+      20,
+      10,
+    );
+    const { client, promise } = start(
+      [reply([submit(plan(true))], 100, 50), writeTypes, verdict("approve"), writePage, verdict("approve"), retro],
+      new ScriptedUser(),
+      undefined,
+      { retrospective: true },
+    );
+    const result = await promise;
+
+    assert.equal(result.outcome, "finished");
+    assert.equal(result.retrospective?.summary, "ok");
+    assert.equal(result.totalCalls, 6);
+    assert.deepEqual(result.usage, { inputTokens: 160, outputTokens: 80 });
+    assert.ok(client.requests[5]?.prompt.includes("Build a small site"));
+  });
+
+  it("keeps the result when the retrospective fails", async () => {
+    const { promise } = start(
+      [reply([submit(plan(true))], 100, 50), writeTypes, verdict("approve"), writePage, verdict("approve"), reply([])],
+      new ScriptedUser(),
+      undefined,
+      { retrospective: true },
+    );
+    const result = await promise;
+
+    assert.equal(result.outcome, "finished");
+    assert.equal(result.retrospective, null);
+    assert.equal(result.report?.iterations.length, 1);
+  });
+
+  it("does not ask for a retrospective by default", async () => {
+    const { client, promise } = start(
+      [reply([submit(plan(true))], 100, 50), writeTypes, verdict("approve"), writePage, verdict("approve")],
+      new ScriptedUser(),
+    );
+    const result = await promise;
+    assert.equal(result.retrospective, null);
+    assert.equal(client.requests.length, 5);
   });
 
   it("finishes without reviews when the plan has no reviewer", async () => {

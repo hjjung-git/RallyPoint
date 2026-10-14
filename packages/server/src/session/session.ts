@@ -1,7 +1,10 @@
-import type { DashboardEvent, Plan, PlanDecision } from "@rallypoint/shared";
+import type { DashboardEvent, Plan, PlanDecision, Retrospective, RunReport } from "@rallypoint/shared";
 import { Board } from "../board/board.js";
 import { Orchestrator } from "../orchestrator/orchestrator.js";
 import { planProject } from "../planner/planner.js";
+import { buildRunReport } from "../report/report.js";
+import { writeRetrospective } from "../report/retrospective.js";
+import type { RetrospectiveOptions } from "../report/retrospective.js";
 import type { PlannerOptions } from "../planner/planner.js";
 import type { LlmClient, TokenUsage } from "../runner/llm.js";
 import type { RunOptions } from "../runner/runner.js";
@@ -50,6 +53,9 @@ export interface RunProjectOptions {
   maxConcurrent?: number;
   plannerOptions?: PlannerOptions;
   runOptions?: RunOptions;
+  // true이면 끝난 뒤 모델 호출 한 번으로 회고를 쓴다(실패해도 결과는 그대로다).
+  retrospective?: boolean;
+  retrospectiveOptions?: RetrospectiveOptions;
 }
 
 export type ProjectOutcome =
@@ -66,6 +72,10 @@ export interface ProjectResult {
   // Planner와 유닛 실행을 합친 모델 호출 횟수와 토큰
   totalCalls: number;
   usage: TokenUsage;
+  // 반복별 정리. 보드가 등록되기 전에 끝났으면 null이다.
+  report: RunReport | null;
+  // 모델이 쓴 회고. 요청하지 않았거나 쓰지 못했으면 null이다.
+  retrospective: Retrospective | null;
 }
 
 // 시나리오에서 시작해 끝까지 잇는다: 작업 폴더 열기, 계획과 승인, 보드 등록, 실행, 문제 해결.
@@ -95,10 +105,13 @@ async function runProjectSteps(options: RunProjectOptions): Promise<ProjectResul
     plan: Plan | null,
     message: string | null,
     run?: { totalCalls: number; usage: TokenUsage },
+    report: RunReport | null = null,
   ): ProjectResult => ({
     outcome,
     plan,
     message,
+    report,
+    retrospective: null,
     totalCalls: planningCalls + (run?.totalCalls ?? 0),
     usage: {
       inputTokens: planningUsage.inputTokens + (run?.usage.inputTokens ?? 0),
@@ -153,11 +166,32 @@ async function runProjectSteps(options: RunProjectOptions): Promise<ProjectResul
   // 2. 승인된 계획을 보드에 등록한다. 영역, 유닛, 카드 순서다.
   observer.onPhase?.("running");
   const issues = new Map<string, { kind: IssueInfo["kind"]; message: string }>();
+  const events: DashboardEvent[] = [];
   const handleEvent = (event: DashboardEvent): void => {
+    events.push(event);
     if (event.type === "issue_raised") {
       issues.set(event.cardId, { kind: event.kind, message: event.message });
     }
     onEvent(event);
+  };
+  const finish = async (base: ProjectResult): Promise<ProjectResult> => {
+    if (!options.retrospective || base.report === null) {
+      return base;
+    }
+    const written = await writeRetrospective(
+      client,
+      { goal, outcome: base.outcome, report: base.report, events },
+      options.retrospectiveOptions,
+    );
+    return {
+      ...base,
+      retrospective: written.status === "ok" ? written.retrospective : null,
+      totalCalls: base.totalCalls + written.calls,
+      usage: {
+        inputTokens: base.usage.inputTokens + written.usage.inputTokens,
+        outputTokens: base.usage.outputTokens + written.usage.outputTokens,
+      },
+    };
   };
   const board = new Board({ maxConcurrent: options.maxConcurrent, onEvent: handleEvent });
   board.registerAreas(plan.areas, plan.sharedPaths);
@@ -180,7 +214,7 @@ async function runProjectSteps(options: RunProjectOptions): Promise<ProjectResul
     const run = { totalCalls: summary.totalCalls, usage: summary.usage };
 
     if (summary.outcome === "finished") {
-      return result("finished", plan, null, run);
+      return finish(result("finished", plan, null, run, buildRunReport(board.getCards(), events)));
     }
 
     if (summary.outcome === "paused") {
@@ -193,7 +227,7 @@ async function runProjectSteps(options: RunProjectOptions): Promise<ProjectResul
           message: issue.message,
         });
         if (decision === "stop") {
-          return result("stopped", plan, `Stopped at card ${card.id}`, run);
+          return finish(result("stopped", plan, `Stopped at card ${card.id}`, run, buildRunReport(board.getCards(), events)));
         }
         orchestrator.retryBlocked(card.id);
       }
@@ -204,6 +238,14 @@ async function runProjectSteps(options: RunProjectOptions): Promise<ProjectResul
       .getCards()
       .filter((c) => c.status !== "done")
       .map((c) => `${c.id}(${c.status})`);
-    return result("stalled", plan, `Cannot continue. Remaining cards: ${remaining.join(", ")}`, run);
+    return finish(
+      result(
+        "stalled",
+        plan,
+        `Cannot continue. Remaining cards: ${remaining.join(", ")}`,
+        run,
+        buildRunReport(board.getCards(), events),
+      ),
+    );
   }
 }

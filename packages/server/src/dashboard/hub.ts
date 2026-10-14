@@ -97,6 +97,7 @@ export class DashboardHub {
         inputTokens: result.usage.inputTokens,
         outputTokens: result.usage.outputTokens,
         report: result.report,
+        retrospective: result.retrospective,
       };
       this.broadcastSnapshot();
     },
@@ -109,6 +110,7 @@ export class DashboardHub {
         inputTokens: this.usage.inputTokens,
         outputTokens: this.usage.outputTokens,
         report: null,
+        retrospective: null,
       };
       this.broadcastSnapshot();
     },

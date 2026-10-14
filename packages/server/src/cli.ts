@@ -4,6 +4,7 @@ import { createInterface } from "node:readline/promises";
 import { DashboardHub } from "./dashboard/hub.js";
 import { DashboardInteraction } from "./dashboard/interaction.js";
 import { startDashboardServer } from "./dashboard/server.js";
+import { describeIteration } from "@rallypoint/shared";
 import type { DashboardEvent, Plan } from "@rallypoint/shared";
 import { createAnthropicClient } from "./runner/anthropic-client.js";
 import { loadScenario } from "./scenario/scenario.js";
@@ -19,7 +20,7 @@ const apiKey = process.env.ANTHROPIC_API_KEY;
 const model = process.env.ANTHROPIC_MODEL;
 
 if (!scenarioPath || !workDir) {
-  console.error("사용법: npm run rally -- <시나리오 파일> <빈 작업 폴더> [--dashboard] [--port=3001]");
+  console.error("사용법: npm run rally -- <시나리오 파일> <빈 작업 폴더> [--dashboard] [--port=3001] [--no-retro]");
   process.exit(1);
 }
 if (port !== undefined && (!Number.isInteger(port) || port < 0 || port > 65535)) {
@@ -136,9 +137,20 @@ try {
       hub?.onEvent(event);
     },
     observer: hub?.observer,
+    retrospective: !args.includes("--no-retro"),
   });
 
   console.log(`\n결과: ${result.outcome}${result.message ? ` - ${result.message}` : ""}`);
+  for (const iteration of result.report?.iterations ?? []) {
+    console.log(describeIteration(iteration));
+  }
+  const retro = result.retrospective;
+  if (retro) {
+    console.log(`\n회고: ${retro.summary}`);
+    for (const [title, items] of [["잘된 점", retro.wentWell], ["문제", retro.problems], ["다음에 할 일", retro.nextSteps]] as const) {
+      for (const item of items) console.log(`  ${title}: ${item}`);
+    }
+  }
   console.log(
     `모델 호출 ${result.totalCalls}회, 토큰 입력 ${result.usage.inputTokens} / 출력 ${result.usage.outputTokens}`,
   );

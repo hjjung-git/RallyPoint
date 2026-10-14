@@ -1,6 +1,7 @@
 import type { Card } from "./card.js";
 import type { DashboardEvent } from "./event.js";
 import type { Plan } from "./plan.js";
+import type { Retrospective } from "./retrospective.js";
 import type { RunReport } from "./report.js";
 import type { UnitStatus } from "./unit.js";
 
@@ -75,6 +76,8 @@ export interface SessionResult {
   outputTokens: number;
   // 반복별 정리. 실행이 시작되지 못했으면 null이다.
   report: RunReport | null;
+  // 모델이 쓴 회고. 쓰지 않았거나 실패했으면 null이다.
+  retrospective: Retrospective | null;
 }
 
 export interface DashboardSnapshot {

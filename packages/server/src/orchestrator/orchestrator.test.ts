@@ -491,6 +491,20 @@ describe("Orchestrator", () => {
     assert.equal(board.runningCount(), 0);
   });
 
+  it("gives the user's note to the unit that retries a blocked card", async () => {
+    const { client, orchestrator } = setup({
+      units: [builder("u1")],
+      cards: [card("c1")],
+      steps: [reply([{ name: "report_blocked", input: { reason: "need info" } }]), file("src/a.ts")],
+    });
+    await orchestrator.run();
+    orchestrator.retryBlocked("c1", "  use camelCase  ");
+    await orchestrator.run();
+
+    assert.ok(!client.requests[0]?.prompt.includes("camelCase"));
+    assert.ok(client.requests[1]?.prompt.includes("use camelCase"));
+  });
+
   it("resumes after the user retries a blocked card", async () => {
     const { board, events, orchestrator } = setup({
       units: [builder("u1")],

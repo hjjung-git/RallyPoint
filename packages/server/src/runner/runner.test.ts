@@ -450,6 +450,19 @@ describe("runCard", () => {
       );
     });
 
+    it("shows the project brief and the user's note in work and review calls", async () => {
+      const brief = { projectContext: "GOAL: five criteria A B C D E", userNote: "criteria are in the brief" };
+      const work = new ScriptedClient([reply([propose([{ path: "src/a.ts", content: "x" }])])]);
+      await runCard(work, workspace, unit(), card(), { ...noSleep, ...brief });
+      assert.ok(work.requests[0]?.prompt.includes("GOAL: five criteria A B C D E"));
+      assert.ok(work.requests[0]?.prompt.includes("criteria are in the brief"));
+
+      const bare = new ScriptedClient([reply([propose([{ path: "src/a.ts", content: "x" }])])]);
+      await runCard(bare, workspace, unit(), card(), noSleep);
+      assert.ok(!bare.requests[0]?.prompt.includes("Project brief"));
+      assert.ok(!bare.requests[0]?.prompt.includes("guidance"));
+    });
+
     it("shows reviewer feedback to the builder when it works again", async () => {
       const client = new ScriptedClient([reply([propose([{ path: "src/a.ts", content: "x" }])])]);
       await runCard(client, workspace, unit(), card(), { ...noSleep, feedback: "- add tests" });

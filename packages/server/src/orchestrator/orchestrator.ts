@@ -59,6 +59,8 @@ export class Orchestrator {
   private readonly rejectionCounts = new Map<string, number>();
   // 반려된 카드에 builder가 다시 일할 때 보여 줄 지적 사항
   private readonly feedback = new Map<string, string>();
+  // 막힌 카드를 다시 시도하며 사용자가 남긴 안내. 카드가 끝날 때까지 유지한다.
+  private readonly userNotes = new Map<string, string>();
   // 지금 검토 중인 카드. 검토 대기 카드는 보드에서 상태가 그대로라 따로 기억한다.
   private readonly reviewing = new Set<string>();
   private totalCalls = 0;
@@ -125,10 +127,14 @@ export class Orchestrator {
   }
 
   // 사용자가 문제를 확인한 뒤, 막힌 카드를 다시 시도하게 하고 일시정지를 푼다.
-  retryBlocked(cardId: string): void {
+  retryBlocked(cardId: string, note?: string): void {
     const card = this.board.getCard(cardId);
     if (!card || card.status !== "blocked") {
       throw new Error(`Card ${cardId} is not blocked`);
+    }
+    const trimmed = note?.trim();
+    if (trimmed) {
+      this.userNotes.set(cardId, trimmed);
     }
     this.board.move(cardId, "todo");
     this.conflictCounts.delete(cardId);
@@ -181,8 +187,8 @@ export class Orchestrator {
 
   private start(unit: UnitSpec, card: Card, review: boolean): Promise<Finished> {
     const options: RunOptions = review
-      ? { ...this.runOptions, review: true }
-      : { ...this.runOptions, feedback: this.feedback.get(card.id) };
+      ? { ...this.runOptions, review: true, userNote: this.userNotes.get(card.id) }
+      : { ...this.runOptions, feedback: this.feedback.get(card.id), userNote: this.userNotes.get(card.id) };
     return runCard(this.client, this.workspace, unit, card, options).then(
       (result) => ({ unit, card, result, review }),
       // 실행기가 예상 못 한 오류를 던져도 카드가 진행 중으로 남지 않게 실패로 바꾼다.

@@ -17,6 +17,7 @@ import type { Board } from "../board/board.js";
 import type { ProjectResult, SessionObserver } from "../session/session.js";
 
 export const DEFAULT_MAX_LOG = 200;
+export const MAX_NOTE_CHARS = 2000;
 
 export type PromptInput =
   | Omit<QuestionsPrompt, "id">
@@ -274,7 +275,13 @@ function parseReply(prompt: Prompt, input: Record<string, unknown>): PromptReply
     if (input.decision !== "retry" && input.decision !== "stop") {
       return 'decision must be "retry" or "stop".';
     }
-    return { promptId: prompt.id, kind: "issue", decision: input.decision };
+    const note = input.note;
+    if (note !== undefined && (typeof note !== "string" || note.length > MAX_NOTE_CHARS)) {
+      return `note must be a string of at most ${MAX_NOTE_CHARS} characters.`;
+    }
+    return typeof note === "string" && note.trim() !== ""
+      ? { promptId: prompt.id, kind: "issue", decision: input.decision, note: note.trim() }
+      : { promptId: prompt.id, kind: "issue", decision: input.decision };
   }
 
   const decision = input.decision;

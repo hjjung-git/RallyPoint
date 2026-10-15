@@ -9,7 +9,7 @@ import type { DashboardEvent, Plan } from "@rallypoint/shared";
 import { createAnthropicClient } from "./runner/anthropic-client.js";
 import { loadScenario } from "./scenario/scenario.js";
 import { runProject } from "./session/session.js";
-import type { Interaction, IssueInfo, PlanDecision } from "./session/session.js";
+import type { Interaction, IssueAnswer, IssueInfo, PlanDecision } from "./session/session.js";
 
 const args = process.argv.slice(2);
 const useDashboard = args.includes("--dashboard");
@@ -84,10 +84,12 @@ const interaction: Interaction = {
     return { action: "revise", feedback: input };
   },
 
-  async resolveIssue(issue: IssueInfo): Promise<"retry" | "stop"> {
+  async resolveIssue(issue: IssueInfo): Promise<IssueAnswer> {
     console.log(`\n문제: 카드 ${issue.cardId} "${issue.title}" (${issue.kind})\n  ${issue.message}`);
     const input = (await rl.question("다시 시도하려면 r, 멈추려면 s\n> ")).trim().toLowerCase();
-    return input === "r" ? "retry" : "stop";
+    if (input !== "r") return "stop";
+    const note = (await rl.question("추가 안내가 있으면 입력하세요(없으면 엔터)\n> ")).trim();
+    return note === "" ? "retry" : { decision: "retry", note };
   },
 };
 

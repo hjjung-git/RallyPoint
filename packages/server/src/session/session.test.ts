@@ -11,7 +11,7 @@ import { ScriptedClient, propose, reply } from "../runner/scripted-client.js";
 import type { ScriptedStep } from "../runner/scripted-client.js";
 import type { Scenario } from "../scenario/scenario.js";
 import { runProject } from "./session.js";
-import type { Interaction, IssueInfo, PlanDecision, RunProjectOptions } from "./session.js";
+import type { Interaction, IssueAnswer, IssueInfo, PlanDecision, RunProjectOptions } from "./session.js";
 
 const scenario: Scenario = {
   title: "t",
@@ -61,7 +61,7 @@ class ScriptedUser implements Interaction {
     private readonly script: {
       answers?: string[];
       plans?: PlanDecision[];
-      issues?: ("retry" | "stop")[];
+      issues?: IssueAnswer[];
     } = {},
   ) {}
 
@@ -75,7 +75,7 @@ class ScriptedUser implements Interaction {
     return this.script.plans?.shift() ?? { action: "approve" };
   }
 
-  async resolveIssue(issue: IssueInfo): Promise<"retry" | "stop"> {
+  async resolveIssue(issue: IssueInfo): Promise<IssueAnswer> {
     this.issues.push(issue);
     return this.script.issues?.shift() ?? "retry";
   }
@@ -366,6 +366,29 @@ describe("runProject", () => {
     assert.equal(user.issues[0]?.cardId, "c1");
     assert.equal(user.issues[0]?.kind, "blocked");
     assert.equal(user.issues[0]?.message, "unclear types");
+  });
+
+  it("passes the user's note to the unit when retrying, and shows the project brief to every unit", async () => {
+    const user = new ScriptedUser({ issues: [{ decision: "retry", note: "the five criteria are: A, B, C" }] });
+    const { client, promise } = start(
+      [
+        reply([submit(plan(false))]),
+        reply([{ name: "report_blocked", input: { reason: "criteria missing" } }]),
+        writeTypes,
+        writePage,
+      ],
+      user,
+    );
+    const result = await promise;
+
+    assert.equal(result.outcome, "finished");
+    // 막히기 전 첫 시도에는 안내가 없고, 다시 시도할 때부터 안내가 있다.
+    assert.ok(!client.requests[1]?.prompt.includes("five criteria"));
+    assert.ok(client.requests[2]?.prompt.includes("the five criteria are: A, B, C"));
+    // 유닛 호출마다 시나리오의 목표가 들어 있다.
+    for (const request of client.requests.slice(1)) {
+      assert.ok(request.prompt.includes("Build a small site"), request.prompt.slice(0, 80));
+    }
   });
 
   it("ends as stopped when the user stops at a problem", async () => {

@@ -211,6 +211,29 @@ describe("DashboardHub prompts", () => {
     assert.notEqual(hub.getSnapshot().prompt, null);
   });
 
+  it("accepts an optional trimmed note on a retry and rejects a bad one", async () => {
+    const hub = new DashboardHub();
+    const ask = (): { id: string; answer: Promise<unknown> } => {
+      const answer = hub.ask({ kind: "issue", cardId: "c1", title: "t", issueKind: "blocked", message: "m" });
+      return { id: hub.getSnapshot().prompt?.id ?? "", answer };
+    };
+
+    const a = ask();
+    assert.deepEqual(hub.respond({ promptId: a.id, kind: "issue", decision: "retry", note: "  hint  " }), { ok: true });
+    assert.deepEqual(await a.answer, { promptId: a.id, kind: "issue", decision: "retry", note: "hint" });
+
+    const b = ask();
+    hub.respond({ promptId: b.id, kind: "issue", decision: "retry", note: "   " });
+    assert.deepEqual(await b.answer, { promptId: b.id, kind: "issue", decision: "retry" });
+
+    const c = ask();
+    const tooLong = hub.respond({ promptId: c.id, kind: "issue", decision: "retry", note: "x".repeat(2001) });
+    assert.equal(tooLong.ok, false);
+    const notString = hub.respond({ promptId: c.id, kind: "issue", decision: "retry", note: 5 });
+    assert.equal(notString.ok, false);
+    assert.ok(hub.getSnapshot().prompt !== null);
+  });
+
   it("rejects malformed replies and keeps the prompt open", () => {
     const hub = new DashboardHub();
     hub.ask({ kind: "questions", questions: ["a", "b"] });

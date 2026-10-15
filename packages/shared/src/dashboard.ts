@@ -47,7 +47,7 @@ export type Prompt = QuestionsPrompt | PlanReviewPrompt | IssuePrompt;
 export type PromptReply =
   | { promptId: string; kind: "questions"; answers: string[] }
   | { promptId: string; kind: "plan_review"; decision: PlanDecision }
-  | { promptId: string; kind: "issue"; decision: "retry" | "stop" };
+  | { promptId: string; kind: "issue"; decision: "retry" | "stop"; note?: string };
 
 export interface OpenIssue {
   cardId: string;

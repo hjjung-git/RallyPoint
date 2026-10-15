@@ -26,7 +26,7 @@ export function renderBanner(banner: HTMLElement, snapshot: DashboardSnapshot, c
     text = "서버와 연결이 끊겼습니다. 다시 연결하는 중입니다.";
     kind = "is-offline";
   } else if (snapshot.paused) {
-    text = `일시정지: ${snapshot.pauseReason ?? "문제가 있어 멈췄습니다."}`;
+    text = `일시정지: ${truncate(snapshot.pauseReason ?? "문제가 있어 멈췄습니다.", 160)}`;
     kind = "is-paused";
   }
   banner.hidden = text === "";
@@ -167,14 +167,27 @@ export class PromptPanel {
       ];
     }
 
+    const note = html("textarea", {
+      rows: 3,
+      id: "issue-note",
+      placeholder: "막힌 이유에 대한 답이나 알려 주고 싶은 내용을 적으면 다시 시도할 때 유닛에게 전달됩니다.",
+    });
     return [
       html("h2", {}, `카드 ${prompt.cardId} 확인이 필요합니다`),
       html("p", { class: "prompt-title" }, prompt.title),
       html("p", {}, prompt.message),
+      html("label", { class: "field", for: "issue-note" }, html("span", {}, "추가 안내 (선택)"), note),
       html(
         "div",
         { class: "actions" },
-        button("다시 시도", "primary", () => void submit({ promptId: prompt.id, kind: "issue", decision: "retry" })),
+        button("다시 시도", "primary", () =>
+          void submit({
+            promptId: prompt.id,
+            kind: "issue",
+            decision: "retry",
+            ...(note.value.trim() !== "" ? { note: note.value } : {}),
+          }),
+        ),
         button("멈추기", "plain", () => void submit({ promptId: prompt.id, kind: "issue", decision: "stop" })),
       ),
       error,

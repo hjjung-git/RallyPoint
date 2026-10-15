@@ -22,6 +22,10 @@ export interface RunOptions {
   review?: boolean;
   // 이전에 검토자가 반려하며 남긴 지적. 일을 다시 할 때 보여 준다.
   feedback?: string;
+  // 사용자가 쓴 목표, 제약, 완료 기준 전문. 카드 설명에 다 담기지 않은 맥락이므로 모든 호출에 보여 준다.
+  projectContext?: string;
+  // 카드가 막혔을 때 사용자가 다시 시도하며 남긴 안내
+  userNote?: string;
 }
 
 export type RunFailureKind =
@@ -122,7 +126,7 @@ export async function runCard(
       : [];
 
   const system = buildSystem(unit, mode);
-  const basePrompt = buildPrompt(card, sections, allowedWrite, mode, options.feedback);
+  const basePrompt = buildPrompt(card, sections, allowedWrite, mode, options);
   const tools = toolsFor(unit.permission, mode);
 
   // 3. 호출하고, 실패나 형식 오류는 정해진 횟수까지 다시 시도한다.
@@ -250,13 +254,21 @@ function buildPrompt(
   files: string[],
   allowedWrite: string[],
   mode: ToolMode,
-  feedback: string | undefined,
+  options: RunOptions,
 ): string {
-  const parts = [
+  const { feedback, projectContext, userNote } = options;
+  const parts: string[] = [];
+  if (projectContext) {
+    parts.push(`Project brief from the user (goal, constraints and completion criteria):\n${projectContext}`);
+  }
+  parts.push(
     `Card ${card.id}: ${card.title}`,
     `Description:\n${card.description}`,
     `Done criteria:\n${card.doneCriteria}`,
-  ];
+  );
+  if (userNote) {
+    parts.push(`The user gave this guidance after the card was blocked. Use it:\n${userNote}`);
+  }
   if (mode === "review") {
     parts.push(
       "You are reviewing the finished work for this card. Check the files below against the description and done criteria.",

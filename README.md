@@ -50,7 +50,7 @@ npm run rally -- scenarios/sample-todo-cli.md ~/Desktop/todo-out --dashboard
 
 ## 시나리오 쓰기
 
-Markdown 파일 하나입니다. `scenarios/sample-todo-cli.md`를 참고하세요.
+Markdown 파일 하나입니다. `scenarios/sample-todo-cli.md`(한 번에 끝나는 작은 예)와 `scenarios/sample-todo-tags.md`(여러 반복으로 키우는 예, `--iterations=3`)를 참고하세요.
 
 ```
 # 제목
@@ -69,7 +69,7 @@ Markdown 파일 하나입니다. `scenarios/sample-todo-cli.md`를 참고하세�
 
 - **그래프:** 영역은 가로 띠, 유닛은 왼쪽 원, 카드는 선행 관계 순서로 놓입니다. 작업 중인 유닛에서 카드로 점선이 흐르고(작업은 청록, 검토는 보라), 충돌은 빨간 점선으로 표시됩니다.
 - **보드:** 영역과 상태로 나눈 칸반입니다.
-- 계획 승인, 질문 답변, 막힌 카드의 다시 시도/멈추기를 오른쪽 패널에서 처리합니다.
+- 계획 승인, 질문 답변, 막힌 카드의 다시 시도/멈추기를 오른쪽 패널에서 처리합니다. 다시 시도할 때 "추가 안내"를 적으면 그 카드를 다시 하는 유닛이 읽습니다. 모든 유닛은 시나리오의 목표, 제약, 완료 기준을 항상 함께 받습니다.
 
 ![보드 보기](docs/images/board.png)
 

@@ -15,6 +15,8 @@ import { Workspace } from "../workspace/workspace.js";
 
 export type { PlanDecision };
 
+export type IssueAnswer = "retry" | "stop" | { decision: "retry"; note: string };
+
 export interface IssueInfo {
   cardId: string;
   title: string;
@@ -28,7 +30,8 @@ export interface Interaction {
   // 질문 순서대로 답을 돌려준다.
   answerQuestions(questions: string[]): Promise<string[]>;
   reviewPlan(plan: Plan): Promise<PlanDecision>;
-  resolveIssue(issue: IssueInfo): Promise<"retry" | "stop">;
+  // 다시 시도할 때는 사용자의 추가 안내를 함께 줄 수 있다(막힌 이유에 대한 답 등).
+  resolveIssue(issue: IssueInfo): Promise<IssueAnswer>;
 }
 
 // 진행 상황을 바깥(대시보드 등)에 알리는 연결부. 모두 선택이다.
@@ -212,7 +215,7 @@ async function runProjectSteps(options: RunProjectOptions): Promise<ProjectResul
     client,
     units: plan.units,
     onEvent: handleEvent,
-    runOptions: options.runOptions,
+    runOptions: { ...options.runOptions, projectContext: goal },
   });
 
   // 한 반복이 끝났을 때 다음 반복의 새 카드를 제안받고 사용자의 승인을 받는다. 승인되면 카드, 아니면 끝내는 이유를 돌려준다.
@@ -289,7 +292,7 @@ async function runProjectSteps(options: RunProjectOptions): Promise<ProjectResul
         if (decision === "stop") {
           return finish(result("stopped", current, `Stopped at card ${card.id}`, run, buildRunReport(board.getCards(), events)));
         }
-        orchestrator.retryBlocked(card.id);
+        orchestrator.retryBlocked(card.id, typeof decision === "object" ? decision.note : undefined);
       }
       continue;
     }

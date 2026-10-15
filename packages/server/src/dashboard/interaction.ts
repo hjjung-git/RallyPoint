@@ -1,5 +1,5 @@
 import type { Plan, PlanDecision } from "@rallypoint/shared";
-import type { Interaction, IssueInfo } from "../session/session.js";
+import type { Interaction, IssueAnswer, IssueInfo } from "../session/session.js";
 import type { DashboardHub } from "./hub.js";
 
 // 터미널 대신 대시보드 화면으로 사용자에게 묻는 Interaction.
@@ -22,7 +22,7 @@ export class DashboardInteraction implements Interaction {
     return reply.decision;
   }
 
-  async resolveIssue(issue: IssueInfo): Promise<"retry" | "stop"> {
+  async resolveIssue(issue: IssueInfo): Promise<IssueAnswer> {
     const reply = await this.hub.ask({
       kind: "issue",
       cardId: issue.cardId,
@@ -32,6 +32,9 @@ export class DashboardInteraction implements Interaction {
     });
     if (reply.kind !== "issue") {
       throw new Error("Unexpected reply kind");
+    }
+    if (reply.decision === "retry" && reply.note) {
+      return { decision: "retry", note: reply.note };
     }
     return reply.decision;
   }

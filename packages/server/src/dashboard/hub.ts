@@ -100,6 +100,7 @@ export class DashboardHub {
         report: result.report,
         retrospective: result.retrospective,
         retrospectiveError: result.retrospectiveError,
+        verification: result.verification,
       };
       this.broadcastSnapshot();
     },
@@ -114,6 +115,7 @@ export class DashboardHub {
         report: null,
         retrospective: null,
         retrospectiveError: null,
+        verification: null,
       };
       this.broadcastSnapshot();
     },

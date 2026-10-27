@@ -463,6 +463,23 @@ describe("runCard", () => {
       assert.ok(!bare.requests[0]?.prompt.includes("guidance"));
     });
 
+    it("tells the builder which tests gate the card and shows earlier test failures", async () => {
+      const client = new ScriptedClient([reply([propose([{ path: "src/a.ts", content: "x" }])])]);
+      await runCard(client, workspace, unit(), card({ verify: ["src/a.test.js"] }), {
+        ...noSleep,
+        testFailure: "1 of 2 tests failed.\nnot ok 1 - adds",
+      });
+      const prompt = client.requests[0]?.prompt ?? "";
+      assert.ok(prompt.includes("must pass before this card is accepted"));
+      assert.ok(prompt.includes("src/a.test.js"));
+      assert.ok(prompt.includes("automated tests failed on your previous work"));
+      assert.ok(prompt.includes("not ok 1 - adds"));
+
+      const plain = new ScriptedClient([reply([propose([{ path: "src/a.ts", content: "x" }])])]);
+      await runCard(plain, workspace, unit(), card(), noSleep);
+      assert.ok(!(plain.requests[0]?.prompt ?? "").includes("node --test"));
+    });
+
     it("shows reviewer feedback to the builder when it works again", async () => {
       const client = new ScriptedClient([reply([propose([{ path: "src/a.ts", content: "x" }])])]);
       await runCard(client, workspace, unit(), card(), { ...noSleep, feedback: "- add tests" });

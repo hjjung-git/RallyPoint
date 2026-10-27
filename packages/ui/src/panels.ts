@@ -44,6 +44,9 @@ export function renderResult(root: HTMLElement, snapshot: DashboardSnapshot): vo
     root.replaceChildren(
       html("p", { class: "result-text" }, describeResult(snapshot.result)),
       ...lines,
+      ...(snapshot.result.verification
+        ? [html("p", { class: snapshot.result.verification.passed ? "iteration" : "muted" }, `최종 테스트 ${snapshot.result.verification.passed ? "통과" : "실패"}: ${snapshot.result.verification.summary}`)]
+        : []),
       ...(retro
         ? [
             html("h3", {}, "회고"),

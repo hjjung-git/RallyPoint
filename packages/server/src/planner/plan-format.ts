@@ -85,6 +85,9 @@ function parseCard(value: unknown, path: string): Card {
     status: "todo",
     assignedUnitId: null,
     iteration: asInt(o.iteration, `${path}.iteration`, 1),
+    ...(o.verify === undefined || (Array.isArray(o.verify) && o.verify.length === 0)
+      ? {}
+      : { verify: asStringArray(o.verify, `${path}.verify`) }),
   };
 }
 

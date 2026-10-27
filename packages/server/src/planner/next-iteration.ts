@@ -87,6 +87,9 @@ export function buildNextIterationPrompt(request: NextIterationRequest): string 
       facts.push(`Review rejected card ${event.cardId}: ${event.summary} ${event.findings.join("; ")}`.trim());
     } else if (event.type === "issue_raised") {
       facts.push(`Issue on card ${event.cardId} (${event.kind}): ${event.message}`);
+    } else if (event.type === "verification_result" && event.status === "failed") {
+      const target = event.cardId === null ? "Whole-project tests" : `Tests for card ${event.cardId}`;
+      facts.push(`${target} failed: ${event.summary}${event.details ? `\n${event.details}` : ""}`);
     }
   }
   lines.push("", "Notable events:");

@@ -20,6 +20,8 @@ export interface Card {
   scope: WorkScope;
   dependsOn: string[];
   doneCriteria: string;
+  // 이 카드가 끝났다고 인정하기 전에 통과해야 하는 테스트 파일 경로(작업 폴더 기준, .js). 없으면 게이트를 거치지 않는다.
+  verify?: string[];
   status: CardStatus;
   assignedUnitId: string | null;
   iteration: number;

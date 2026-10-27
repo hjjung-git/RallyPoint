@@ -68,6 +68,9 @@ export function buildRetrospectivePrompt(input: RetrospectiveInput): string {
       facts.push(`Issue on card ${event.cardId} (${event.kind}): ${event.message}`);
     } else if (event.type === "conflict_detected") {
       facts.push(`Conflict on ${event.path} between cards ${event.cardIds.join(", ")}`);
+    } else if (event.type === "verification_result" && event.status === "failed") {
+      const target = event.cardId === null ? "Whole-project tests" : `Tests for card ${event.cardId}`;
+      facts.push(`${target} failed: ${event.summary}`);
     }
   }
   lines.push("", "Notable events:");

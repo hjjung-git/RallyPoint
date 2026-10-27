@@ -60,6 +60,42 @@ describe("parsePlan", () => {
   });
 });
 
+describe("verify paths", () => {
+  it("reads verify and leaves it out when absent or empty", () => {
+    const raw = rawPlan();
+    raw.cards[0].verify = ["src/shared/types.test.js"];
+    raw.cards[1].verify = [];
+    const plan = parsed(raw);
+    assert.deepEqual(plan.cards[0]?.verify, ["src/shared/types.test.js"]);
+    assert.equal(plan.cards[1]?.verify, undefined);
+    assert.equal("verify" in (plan.cards[1] ?? {}), false);
+  });
+
+  it("rejects a verify that is not a list of strings", () => {
+    const raw = rawPlan();
+    raw.cards[0].verify = "a.test.js";
+    const result = parsePlan(raw);
+    assert.ok(!result.ok && result.message.includes("verify"));
+  });
+
+  it("accepts a test file that some card can write", () => {
+    const raw = rawPlan();
+    raw.cards[1].verify = ["src/web/page.test.js"];
+    assert.equal(validatePlan(parsed(raw)), null);
+  });
+
+  it("rejects verify paths that cannot be run or created", () => {
+    for (const bad of ["src/web/page.test.ts", "src/web/", "../x.test.js"]) {
+      const raw = rawPlan();
+      raw.cards[1].verify = [bad];
+      assert.match(validatePlan(parsed(raw)) ?? "", /invalid verify path/, bad);
+    }
+    const raw = rawPlan();
+    raw.cards[1].verify = ["docs/page.test.js"];
+    assert.match(validatePlan(parsed(raw)) ?? "", /no card in the plan can write/);
+  });
+});
+
 describe("validatePlan", () => {
   it("accepts a sound plan", () => {
     assert.equal(validatePlan(parsed(rawPlan())), null);

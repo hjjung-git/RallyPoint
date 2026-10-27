@@ -9,6 +9,7 @@ import { LlmError } from "../runner/llm.js";
 import type { LlmResponse } from "../runner/llm.js";
 import { ScriptedClient, propose, reply } from "../runner/scripted-client.js";
 import type { ScriptedStep } from "../runner/scripted-client.js";
+import type { TestOutcome, TestRunner } from "../verify/test-runner.js";
 import { Workspace } from "../workspace/workspace.js";
 import { Orchestrator } from "./orchestrator.js";
 
@@ -93,6 +94,7 @@ describe("Orchestrator", () => {
     maxConcurrent?: number;
     maxConflictRetries?: number;
     maxReviewRejections?: number;
+    testRunner?: TestRunner;
   }) {
     const events: DashboardEvent[] = [];
     const onEvent = (event: DashboardEvent) => events.push(event);
@@ -110,6 +112,7 @@ describe("Orchestrator", () => {
       runOptions: { sleep: async () => {} },
       maxConflictRetries: options.maxConflictRetries,
       maxReviewRejections: options.maxReviewRejections,
+      testRunner: options.testRunner,
     });
     return { board, events, client, orchestrator };
   }
@@ -558,6 +561,122 @@ describe("Orchestrator", () => {
       totalCalls: 2,
       inputTokens: 150,
       outputTokens: 25,
+    });
+  });
+
+  describe("regression gate", () => {
+    const failing: TestOutcome = { status: "failed", summary: "1 of 2 tests failed.", output: "not ok 1 - adds" };
+    const passing: TestOutcome = { status: "passed", summary: "2 of 2 tests passed.", output: "" };
+
+    function scriptedRunner(outcomes: TestOutcome[]) {
+      const calls: { root: string; files: string[] | null }[] = [];
+      const runner: TestRunner = async (root, files) => {
+        calls.push({ root, files });
+        return outcomes[Math.min(calls.length - 1, outcomes.length - 1)] as TestOutcome;
+      };
+      return { runner, calls };
+    }
+
+    it("runs the card's tests before review and sends failures back with the output", async () => {
+      const { runner, calls } = scriptedRunner([failing, passing]);
+      const { board, client, events, orchestrator } = setup({
+        units: [builder("u1"), reviewer("r1")],
+        cards: [card("c1", { verify: ["src/a.test.js"] })],
+        steps: [file("src/a.js", "v1"), file("src/a.js", "v2"), verdict("approve")],
+        testRunner: runner,
+      });
+      const summary = await orchestrator.run();
+
+      assert.equal(summary.outcome, "finished");
+      assert.equal(board.getCard("c1")?.status, "done");
+      assert.deepEqual(calls.map((c) => c.files), [["src/a.test.js"], ["src/a.test.js"]]);
+      assert.equal(calls[0]?.root, workspace.getRoot());
+      // 실패한 작업은 검토로 가지 않는다: 호출은 builder 2번과 검토 1번이다.
+      assert.equal(client.requests.length, 3);
+      const retryPrompt = client.requests[1]?.prompt ?? "";
+      assert.ok(retryPrompt.includes("automated tests failed"));
+      assert.ok(retryPrompt.includes("not ok 1 - adds"));
+      assert.ok(retryPrompt.includes("src/a.test.js"));
+      assert.ok(!(client.requests[2]?.prompt ?? "").includes("not ok 1"));
+      const results = events.filter((e) => e.type === "verification_result");
+      assert.deepEqual(
+        results.map((e) => (e.type === "verification_result" ? `${e.scope}:${e.cardId}:${e.status}` : "")),
+        ["card:c1:failed", "card:c1:passed"],
+      );
+      const first = results[0];
+      assert.ok(first?.type === "verification_result" && first.details === "not ok 1 - adds");
+    });
+
+    it("blocks the card and pauses when the tests keep failing", async () => {
+      const { runner } = scriptedRunner([failing]);
+      const { board, events, orchestrator } = setup({
+        units: [builder("u1")],
+        cards: [card("c1", { verify: ["src/a.test.js"] })],
+        steps: [file("src/a.js", "1"), file("src/a.js", "2"), file("src/a.js", "3")],
+        testRunner: runner,
+        maxReviewRejections: 1,
+      });
+      const summary = await orchestrator.run();
+
+      assert.equal(summary.outcome, "paused");
+      assert.equal(board.getCard("c1")?.status, "blocked");
+      const issue = events.find((e) => e.type === "issue_raised");
+      assert.ok(issue?.type === "issue_raised" && issue.kind === "failed" && issue.message.includes("Tests failed 2 times"));
+    });
+
+    it("lets a skipped run through", async () => {
+      const { runner } = scriptedRunner([{ status: "skipped", summary: "Test file not created yet: src/a.test.js" }]);
+      const { board, events, orchestrator } = setup({
+        units: [builder("u1")],
+        cards: [card("c1", { verify: ["src/a.test.js"] })],
+        steps: [file("src/a.js")],
+        testRunner: runner,
+      });
+      const summary = await orchestrator.run();
+
+      assert.equal(summary.outcome, "finished");
+      assert.equal(board.getCard("c1")?.status, "done");
+      const result = events.find((e) => e.type === "verification_result");
+      assert.ok(result?.type === "verification_result" && result.status === "skipped");
+    });
+
+    it("does not run tests for cards without verify, or when no runner is given", async () => {
+      const { runner, calls } = scriptedRunner([failing]);
+      const first = setup({
+        units: [builder("u1")],
+        cards: [card("c1")],
+        steps: [file("src/a.js")],
+        testRunner: runner,
+      });
+      assert.equal((await first.orchestrator.run()).outcome, "finished");
+      assert.equal(calls.length, 0);
+    });
+
+    it("ignores verify when there is no test runner", async () => {
+      const { board, events, orchestrator } = setup({
+        units: [builder("u1")],
+        cards: [card("c1", { verify: ["src/a.test.js"] })],
+        steps: [file("src/a.js")],
+      });
+      assert.equal((await orchestrator.run()).outcome, "finished");
+      assert.equal(board.getCard("c1")?.status, "done");
+      assert.equal(events.filter((e) => e.type === "verification_result").length, 0);
+    });
+
+    it("turns an unexpected test runner error into a failed gate", async () => {
+      const runner: TestRunner = async () => {
+        throw new Error("spawn exploded");
+      };
+      const { board, orchestrator } = setup({
+        units: [builder("u1")],
+        cards: [card("c1", { verify: ["src/a.test.js"] })],
+        steps: [file("src/a.js"), file("src/a.js"), file("src/a.js")],
+        testRunner: runner,
+        maxReviewRejections: 0,
+      });
+      const summary = await orchestrator.run();
+      assert.equal(summary.outcome, "paused");
+      assert.equal(board.getCard("c1")?.status, "blocked");
     });
   });
 

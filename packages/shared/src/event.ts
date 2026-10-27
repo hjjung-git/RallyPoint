@@ -25,6 +25,16 @@ export type DashboardEvent =
       summary: string;
       findings: string[];
     }
+  // 자동 테스트(회귀 게이트) 결과. 카드 게이트는 cardId가 있고, 반복이 끝난 뒤의 전체 테스트는 cardId가 null이다.
+  | {
+      type: "verification_result";
+      scope: "card" | "iteration";
+      cardId: string | null;
+      status: "passed" | "failed" | "skipped";
+      summary: string;
+      // 실패했을 때 테스트 출력의 끝부분(길면 잘려 있다)
+      details?: string;
+    }
   // 지금까지 모델 호출 횟수와 토큰 합계
   | {
       type: "usage_updated";

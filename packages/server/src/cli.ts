@@ -9,6 +9,7 @@ import type { DashboardEvent, Plan } from "@rallypoint/shared";
 import { createAnthropicClient } from "./runner/anthropic-client.js";
 import { loadScenario } from "./scenario/scenario.js";
 import { runProject } from "./session/session.js";
+import { createNodeTestRunner } from "./verify/test-runner.js";
 import type { Interaction, IssueAnswer, IssueInfo, PlanDecision } from "./session/session.js";
 
 const args = process.argv.slice(2);
@@ -106,6 +107,11 @@ function printEvent(event: DashboardEvent): void {
         console.log(`    · ${finding}`);
       }
       break;
+    case "verification_result":
+      console.log(
+        `  테스트 ${event.cardId ?? "전체"}: ${event.status === "passed" ? "통과" : event.status === "failed" ? "실패" : "건너뜀"} - ${event.summary}`,
+      );
+      break;
     case "conflict_detected":
       console.log(`  충돌: ${event.path} (카드 ${event.cardIds.join(", ")})`);
       break;
@@ -145,6 +151,7 @@ try {
     },
     observer: hub?.observer,
     retrospective: !args.includes("--no-retro"),
+    testRunner: args.includes("--no-tests") ? undefined : createNodeTestRunner(),
     maxIterations: iterationsArg ? Number(iterationsArg.slice("--iterations=".length)) : 1,
   });
 
@@ -161,6 +168,9 @@ try {
   }
   if (result.retrospectiveError) {
     console.log(`\n회고를 쓰지 못했습니다: ${result.retrospectiveError}`);
+  }
+  if (result.verification) {
+    console.log(`최종 테스트 ${result.verification.passed ? "통과" : "실패"}: ${result.verification.summary}`);
   }
   console.log(
     `모델 호출 ${result.totalCalls}회, 토큰 입력 ${result.usage.inputTokens} / 출력 ${result.usage.outputTokens}`,

@@ -10,6 +10,7 @@ import type { PlannerOptions } from "../planner/planner.js";
 import type { LlmClient, TokenUsage } from "../runner/llm.js";
 import type { RunOptions } from "../runner/runner.js";
 import { scenarioToGoal } from "../scenario/scenario.js";
+import type { TestRunner } from "../verify/test-runner.js";
 import type { Scenario } from "../scenario/scenario.js";
 import { Workspace } from "../workspace/workspace.js";
 
@@ -62,6 +63,8 @@ export interface RunProjectOptions {
   // 한 번에 돌릴 반복의 최대 수(기본 1). 2 이상이면 한 반복이 끝날 때마다 Planner가 다음 반복의 새 카드를 제안하고 사용자가 승인한다.
   maxIterations?: number;
   retrospectiveOptions?: RetrospectiveOptions;
+  // 있으면 회귀 게이트를 켠다: 카드의 verify 테스트를 통과해야 검토로 넘어가고, 반복이 끝나면 전체 테스트를 한 번 돌린다.
+  testRunner?: TestRunner;
 }
 
 export type ProjectOutcome =
@@ -84,6 +87,8 @@ export interface ProjectResult {
   retrospective: Retrospective | null;
   // 회고를 요청했는데 쓰지 못했을 때의 이유
   retrospectiveError: string | null;
+  // 마지막 반복이 끝난 뒤 돌린 전체 테스트의 결과. 돌리지 않았거나 테스트가 없었으면 null이다.
+  verification: { passed: boolean; summary: string } | null;
 }
 
 // 시나리오에서 시작해 끝까지 잇는다: 작업 폴더 열기, 계획과 승인, 보드 등록, 실행, 문제 해결.
@@ -121,6 +126,7 @@ async function runProjectSteps(options: RunProjectOptions): Promise<ProjectResul
     report,
     retrospective: null,
     retrospectiveError: null,
+    verification: null,
     totalCalls: planningCalls + (run?.totalCalls ?? 0),
     usage: {
       inputTokens: planningUsage.inputTokens + (run?.usage.inputTokens ?? 0),
@@ -216,7 +222,38 @@ async function runProjectSteps(options: RunProjectOptions): Promise<ProjectResul
     units: plan.units,
     onEvent: handleEvent,
     runOptions: { ...options.runOptions, projectContext: goal },
+    testRunner: options.testRunner,
   });
+
+  // 반복이 끝난 뒤 작업 폴더 전체의 테스트를 한 번 돌린다. 결과는 이벤트로 남아 다음 반복 계획과 회고에 쓰인다.
+  const verified: { value: ProjectResult["verification"] } = { value: null };
+  const verifyIteration = async (): Promise<void> => {
+    verified.value = null;
+    if (options.testRunner === undefined) {
+      return;
+    }
+    let outcome;
+    try {
+      outcome = await options.testRunner(workspace.getRoot(), null);
+    } catch (error) {
+      outcome = {
+        status: "failed" as const,
+        summary: `The test run failed unexpectedly: ${error instanceof Error ? error.message : String(error)}`,
+        output: "",
+      };
+    }
+    handleEvent({
+      type: "verification_result",
+      scope: "iteration",
+      cardId: null,
+      status: outcome.status,
+      summary: outcome.summary,
+      ...(outcome.status === "failed" && outcome.output !== "" ? { details: outcome.output.slice(-2000) } : {}),
+    });
+    if (outcome.status !== "skipped") {
+      verified.value = { passed: outcome.status === "passed", summary: outcome.summary };
+    }
+  };
 
   // 한 반복이 끝났을 때 다음 반복의 새 카드를 제안받고 사용자의 승인을 받는다. 승인되면 카드, 아니면 끝내는 이유를 돌려준다.
   let current: Plan = plan;
@@ -266,6 +303,7 @@ async function runProjectSteps(options: RunProjectOptions): Promise<ProjectResul
     const run = { totalCalls: summary.totalCalls, usage: summary.usage };
 
     if (summary.outcome === "finished") {
+      await verifyIteration();
       let note: string | null = null;
       if (iteration < maxIterations) {
         const next = await proposeNext();
@@ -277,7 +315,14 @@ async function runProjectSteps(options: RunProjectOptions): Promise<ProjectResul
         }
         note = next.note;
       }
-      return finish(result("finished", current, note, run, buildRunReport(board.getCards(), events)));
+      if (verified.value !== null && !verified.value.passed) {
+        const failure = `Final tests failed: ${verified.value.summary}`;
+        note = note === null ? failure : `${failure} ${note}`;
+      }
+      return finish({
+        ...result("finished", current, note, run, buildRunReport(board.getCards(), events)),
+        verification: verified.value,
+      });
     }
 
     if (summary.outcome === "paused") {

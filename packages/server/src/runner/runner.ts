@@ -26,6 +26,8 @@ export interface RunOptions {
   projectContext?: string;
   // 카드가 막혔을 때 사용자가 다시 시도하며 남긴 안내
   userNote?: string;
+  // 직전 작업이 자동 테스트에서 실패했을 때의 테스트 출력
+  testFailure?: string;
 }
 
 export type RunFailureKind =
@@ -256,7 +258,7 @@ function buildPrompt(
   mode: ToolMode,
   options: RunOptions,
 ): string {
-  const { feedback, projectContext, userNote } = options;
+  const { feedback, projectContext, userNote, testFailure } = options;
   const parts: string[] = [];
   if (projectContext) {
     parts.push(`Project brief from the user (goal, constraints and completion criteria):\n${projectContext}`);
@@ -275,6 +277,14 @@ function buildPrompt(
     );
   } else {
     parts.push(`Files you may write: ${allowedWrite.length > 0 ? allowedWrite.join(", ") : "(none)"}`);
+    if (card.verify && card.verify.length > 0) {
+      parts.push(
+        `These test files must pass before this card is accepted. They run with node --test from the workspace root: ${card.verify.join(", ")}`,
+      );
+    }
+    if (testFailure) {
+      parts.push(`The automated tests failed on your previous work. Fix the code or the tests so they pass:\n${testFailure}`);
+    }
     if (feedback) {
       parts.push(`A reviewer rejected your previous work with these findings. Fix them:\n${feedback}`);
     }

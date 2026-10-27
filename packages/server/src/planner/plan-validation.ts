@@ -1,5 +1,6 @@
 import type { Plan } from "@rallypoint/shared";
 import { Board } from "../board/board.js";
+import { isCoveredByAny, isValidScopeEntry } from "../board/scope.js";
 
 // 계획이 실제로 돌아갈 수 있는지 검사한다. 문제가 없으면 null, 있으면 고칠 수 있게 이유를 돌려준다.
 // 영역, 범위, 의존 관계 규칙은 보드 등록과 같은 코드로 검사해서 두 곳의 규칙이 어긋나지 않게 한다.
@@ -38,6 +39,19 @@ export function validatePlan(plan: Plan): string | null {
     );
     if (!hasBuilder) {
       return `Area "${area.id}" has no builder unit. Every area needs at least one.`;
+    }
+  }
+
+  // 검증 파일은 테스트로 돌릴 수 있는 .js 파일이어야 하고, 계획 안의 어느 카드가 만들 수 있는 위치여야 한다.
+  const allWrite = plan.cards.flatMap((card) => card.scope.write);
+  for (const card of plan.cards) {
+    for (const file of card.verify ?? []) {
+      if (!isValidScopeEntry(file) || file.endsWith("/") || !/\.(c|m)?js$/.test(file)) {
+        return `Card "${card.id}" has an invalid verify path "${file}". Use a test file path ending in .js, .mjs or .cjs.`;
+      }
+      if (!isCoveredByAny(file, allWrite)) {
+        return `Card "${card.id}" verifies "${file}", but no card in the plan can write that file.`;
+      }
     }
   }
 

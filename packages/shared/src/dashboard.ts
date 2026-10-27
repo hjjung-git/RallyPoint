@@ -80,6 +80,8 @@ export interface SessionResult {
   retrospective: Retrospective | null;
   // 회고를 요청했는데 쓰지 못했을 때의 이유
   retrospectiveError: string | null;
+  // 마지막 반복이 끝난 뒤 돌린 전체 테스트의 결과. 돌리지 않았거나 테스트가 없었으면 null이다.
+  verification: { passed: boolean; summary: string } | null;
 }
 
 export interface DashboardSnapshot {

@@ -3,6 +3,7 @@ import type { Board } from "../board/board.js";
 import type { LlmClient, TokenUsage } from "../runner/llm.js";
 import { runCard } from "../runner/runner.js";
 import type { RunOptions, RunResult } from "../runner/runner.js";
+import type { TestOutcome, TestRunner } from "../verify/test-runner.js";
 import type { Workspace } from "../workspace/workspace.js";
 
 // 같은 카드가 이 횟수까지 충돌하면 다시 시도하고, 넘으면 막힘으로 두고 사용자에게 알린다.
@@ -20,6 +21,8 @@ export interface OrchestratorOptions {
   runOptions?: RunOptions;
   maxConflictRetries?: number;
   maxReviewRejections?: number;
+  // 있으면 카드가 verify 파일을 가졌을 때 완료를 인정하기 전에 테스트를 돌린다(회귀 게이트). 없으면 게이트를 거치지 않는다.
+  testRunner?: TestRunner;
 }
 
 export type OrchestratorOutcome =
@@ -40,7 +43,14 @@ interface Finished {
   result: RunResult;
   // 일이 아니라 검토를 한 실행인가
   review: boolean;
+  // 일이 끝난 뒤 돌린 카드 테스트의 결과(돌리지 않았으면 없다)
+  verification?: TestOutcome;
 }
+
+// 테스트 출력이 길면 builder에게 보여 줄 때 이만큼만 남긴다.
+const MAX_TEST_FEEDBACK_CHARS = 6000;
+// 이벤트에 싣는 테스트 출력의 상한
+const MAX_EVENT_DETAILS_CHARS = 2000;
 
 // 보드의 규칙에 따라 카드를 유닛에게 나눠 주고, 실행 결과를 보드에 반영하는 루프.
 // 무엇을 할지는 보드와 실행기가 정하고, 여기서는 결과를 다음 상태로 옮기기만 한다.
@@ -53,12 +63,15 @@ export class Orchestrator {
   private readonly runOptions: RunOptions;
   private readonly maxConflictRetries: number;
   private readonly maxReviewRejections: number;
+  private readonly testRunner: TestRunner | undefined;
 
   private readonly conflictCounts = new Map<string, number>();
   private readonly conflictPaths = new Map<string, string>();
   private readonly rejectionCounts = new Map<string, number>();
   // 반려된 카드에 builder가 다시 일할 때 보여 줄 지적 사항
   private readonly feedback = new Map<string, string>();
+  // 자동 테스트에서 실패한 카드에 builder가 다시 일할 때 보여 줄 테스트 출력
+  private readonly testFeedback = new Map<string, string>();
   // 막힌 카드를 다시 시도하며 사용자가 남긴 안내. 카드가 끝날 때까지 유지한다.
   private readonly userNotes = new Map<string, string>();
   // 지금 검토 중인 카드. 검토 대기 카드는 보드에서 상태가 그대로라 따로 기억한다.
@@ -85,6 +98,7 @@ export class Orchestrator {
       options.maxConflictRetries ?? DEFAULT_MAX_CONFLICT_RETRIES;
     this.maxReviewRejections =
       options.maxReviewRejections ?? DEFAULT_MAX_REVIEW_REJECTIONS;
+    this.testRunner = options.testRunner;
   }
 
   // 더 진행할 수 없을 때까지 카드를 나눠 주고 실행한다. 멈춘 뒤 다시 불러도 된다.
@@ -188,9 +202,20 @@ export class Orchestrator {
   private start(unit: UnitSpec, card: Card, review: boolean): Promise<Finished> {
     const options: RunOptions = review
       ? { ...this.runOptions, review: true, userNote: this.userNotes.get(card.id) }
-      : { ...this.runOptions, feedback: this.feedback.get(card.id), userNote: this.userNotes.get(card.id) };
+      : {
+          ...this.runOptions,
+          feedback: this.feedback.get(card.id),
+          testFailure: this.testFeedback.get(card.id),
+          userNote: this.userNotes.get(card.id),
+        };
     return runCard(this.client, this.workspace, unit, card, options).then(
-      (result) => ({ unit, card, result, review }),
+      async (result): Promise<Finished> => {
+        // 일이 끝났으면 검토 전에 카드의 테스트를 돌린다. 이 동안 유닛은 계속 일하는 중이다.
+        if (!review && result.status === "completed") {
+          return { unit, card, result, review, verification: await this.verify(card) };
+        }
+        return { unit, card, result, review };
+      },
       // 실행기가 예상 못 한 오류를 던져도 카드가 진행 중으로 남지 않게 실패로 바꾼다.
       (error: unknown): Finished => ({
         unit,
@@ -227,7 +252,23 @@ export class Orchestrator {
     });
   }
 
-  private handleWork({ unit, card, result }: Finished): void {
+  // 카드가 verify 파일을 가졌고 테스트 실행기가 있을 때만 테스트를 돌린다.
+  private async verify(card: Card): Promise<TestOutcome | undefined> {
+    if (this.testRunner === undefined || !card.verify || card.verify.length === 0) {
+      return undefined;
+    }
+    try {
+      return await this.testRunner(this.workspace.getRoot(), card.verify);
+    } catch (error) {
+      return {
+        status: "failed",
+        summary: `The test run failed unexpectedly: ${error instanceof Error ? error.message : String(error)}`,
+        output: "",
+      };
+    }
+  }
+
+  private handleWork({ unit, card, result, verification }: Finished): void {
     switch (result.status) {
       case "completed": {
         const resolved = this.conflictPaths.get(card.id);
@@ -235,6 +276,23 @@ export class Orchestrator {
           this.conflictPaths.delete(card.id);
           this.onEvent({ type: "conflict_resolved", path: resolved });
         }
+        if (verification !== undefined) {
+          this.onEvent({
+            type: "verification_result",
+            scope: "card",
+            cardId: card.id,
+            status: verification.status,
+            summary: verification.summary,
+            ...(verification.status === "failed" && verification.output !== ""
+              ? { details: verification.output.slice(-MAX_EVENT_DETAILS_CHARS) }
+              : {}),
+          });
+          if (verification.status === "failed") {
+            this.rejectForTests(card, verification);
+            break;
+          }
+        }
+        this.testFeedback.delete(card.id);
         if (this.needsReview(unit, card)) {
           this.board.move(card.id, "review");
         } else {
@@ -272,6 +330,23 @@ export class Orchestrator {
       }
       default:
         this.raiseIssue(card.id, "failed", `Unexpected result: ${result.status}`);
+    }
+  }
+
+  // 테스트가 실패하면 reviewer 반려와 같은 경로로 처리한다. 반려 횟수 한도도 함께 쓴다.
+  private rejectForTests(card: Card, verification: TestOutcome): void {
+    const output = verification.status === "failed" ? verification.output : "";
+    const text = `${verification.summary}\n${output}`.trim();
+    this.testFeedback.set(
+      card.id,
+      text.length <= MAX_TEST_FEEDBACK_CHARS ? text : text.slice(-MAX_TEST_FEEDBACK_CHARS),
+    );
+    const count = (this.rejectionCounts.get(card.id) ?? 0) + 1;
+    this.rejectionCounts.set(card.id, count);
+    if (count > this.maxReviewRejections) {
+      this.raiseIssue(card.id, "failed", `Tests failed ${count} times. Last result: ${verification.summary}`);
+    } else {
+      this.board.move(card.id, "todo");
     }
   }
 
@@ -340,6 +415,7 @@ export class Orchestrator {
   private clearReviewState(cardId: string): void {
     this.rejectionCounts.delete(cardId);
     this.feedback.delete(cardId);
+    this.testFeedback.delete(cardId);
   }
 
   private assertInReview(cardId: string): void {

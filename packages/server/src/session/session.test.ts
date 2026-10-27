@@ -10,6 +10,7 @@ import type { ToolCall } from "../runner/llm.js";
 import { ScriptedClient, propose, reply } from "../runner/scripted-client.js";
 import type { ScriptedStep } from "../runner/scripted-client.js";
 import type { Scenario } from "../scenario/scenario.js";
+import type { TestOutcome, TestRunner } from "../verify/test-runner.js";
 import { runProject } from "./session.js";
 import type { Interaction, IssueAnswer, IssueInfo, PlanDecision, RunProjectOptions } from "./session.js";
 
@@ -196,6 +197,63 @@ describe("runProject", () => {
     assert.deepEqual(result.report?.iterations.map((r) => r.iteration), [1, 2]);
     assert.ok(client.requests[5]?.prompt.includes("The next iteration number is 2"));
     assert.equal(result.plan?.cards.length, 3);
+  });
+
+  describe("regression gate", () => {
+    const failing: TestOutcome = { status: "failed", summary: "1 of 3 tests failed.", output: "not ok 2 - lists tags" };
+
+    it("runs the whole test suite after the iteration and reports the result", async () => {
+      const calls: (string[] | null)[] = [];
+      const runner: TestRunner = async (_root, files) => {
+        calls.push(files);
+        return { status: "passed", summary: "3 of 3 tests passed.", output: "" };
+      };
+      const events: DashboardEvent[] = [];
+      const { promise } = start(firstIteration(), new ScriptedUser(), (e) => events.push(e), { testRunner: runner });
+      const result = await promise;
+
+      assert.equal(result.outcome, "finished");
+      assert.deepEqual(calls, [null]);
+      assert.deepEqual(result.verification, { passed: true, summary: "3 of 3 tests passed." });
+      assert.equal(result.message, null);
+      const event = events.find((e) => e.type === "verification_result");
+      assert.ok(event?.type === "verification_result" && event.scope === "iteration" && event.cardId === null);
+    });
+
+    it("notes failed final tests in the message but still finishes", async () => {
+      const { promise } = start(firstIteration(), new ScriptedUser(), undefined, {
+        testRunner: async () => failing,
+      });
+      const result = await promise;
+
+      assert.equal(result.outcome, "finished");
+      assert.equal(result.verification?.passed, false);
+      assert.match(result.message ?? "", /Final tests failed: 1 of 3 tests failed/);
+    });
+
+    it("shows the test failure to the planner when it plans the next iteration", async () => {
+      const { client, promise } = start(
+        [...firstIteration(), nextCards(polishCard), writePolish, verdict("approve")],
+        new ScriptedUser(),
+        undefined,
+        { maxIterations: 2, testRunner: async () => failing },
+      );
+      await promise;
+
+      const prompt = client.requests[5]?.prompt ?? "";
+      assert.ok(prompt.includes("Whole-project tests failed: 1 of 3 tests failed."));
+      assert.ok(prompt.includes("not ok 2 - lists tags"));
+    });
+
+    it("does not report skipped runs, and does nothing without a runner", async () => {
+      const skipped = await start(firstIteration(), new ScriptedUser(), undefined, {
+        testRunner: async () => ({ status: "skipped", summary: "No tests found." }),
+      }).promise;
+      assert.equal(skipped.verification, null);
+
+      const none = await start(firstIteration(), new ScriptedUser(), undefined, { workspaceDir: join(dir, "work2") }).promise;
+      assert.equal(none.verification, null);
+    });
   });
 
   it("stops after the first iteration when the planner says the goal is met", async () => {

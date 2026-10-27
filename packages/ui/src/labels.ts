@@ -60,6 +60,11 @@ export function describeEvent(event: DashboardEvent): string {
       return `유닛 ${event.unitId}가 카드 ${event.cardId} 검토 시작`;
     case "review_result":
       return `카드 ${event.cardId} 검토 ${event.verdict === "approve" ? "승인" : "반려"}: ${event.summary}`;
+    case "verification_result": {
+      const target = event.cardId === null ? "전체 테스트" : `카드 ${event.cardId} 테스트`;
+      const label = event.status === "passed" ? "통과" : event.status === "failed" ? "실패" : "건너뜀";
+      return `${target} ${label}: ${event.summary}`;
+    }
     case "usage_updated":
       return `모델 호출 ${event.totalCalls}회`;
   }

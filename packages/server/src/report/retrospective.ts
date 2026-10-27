@@ -68,11 +68,14 @@ export function buildRetrospectivePrompt(input: RetrospectiveInput): string {
       facts.push(`Issue on card ${event.cardId} (${event.kind}): ${event.message}`);
     } else if (event.type === "conflict_detected") {
       facts.push(`Conflict on ${event.path} between cards ${event.cardIds.join(", ")}`);
-    } else if (event.type === "verification_result" && event.status === "failed") {
-      const target = event.cardId === null ? "Whole-project tests" : `Tests for card ${event.cardId}`;
-      facts.push(`${target} failed: ${event.summary}`);
     }
   }
+  // 테스트 결과는 통과도 알려 준다(모르면 회고가 "확인할 수 없다"고 쓴다). 건너뛴 실행은 뺀다.
+  const tests = input.events.flatMap((event) =>
+    event.type === "verification_result" && event.status !== "skipped"
+      ? [`${event.cardId === null ? "Whole-project tests" : `Tests for card ${event.cardId}`} ${event.status}: ${event.summary}`]
+      : [],
+  );
   lines.push("", "Notable events:");
   if (facts.length === 0) {
     lines.push("- none");
@@ -82,6 +85,12 @@ export function buildRetrospectivePrompt(input: RetrospectiveInput): string {
   }
   if (facts.length > MAX_FACTS) {
     lines.push(`- (${facts.length - MAX_FACTS} more not shown)`);
+  }
+  if (tests.length > 0) {
+    lines.push("", "Automated test results:");
+    for (const test of tests.slice(0, MAX_FACTS)) {
+      lines.push(`- ${test}`);
+    }
   }
   return lines.join("\n");
 }

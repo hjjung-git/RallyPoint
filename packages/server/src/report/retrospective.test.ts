@@ -45,6 +45,20 @@ describe("buildRetrospectivePrompt", () => {
     assert.ok(!prompt.includes("approve"));
   });
 
+  it("lists passed and failed test runs but not skipped ones", () => {
+    const events = [
+      { type: "verification_result" as const, scope: "card" as const, cardId: "c11", status: "passed" as const, summary: "20 of 20 tests passed." },
+      { type: "verification_result" as const, scope: "iteration" as const, cardId: null, status: "failed" as const, summary: "1 of 3 tests failed." },
+      { type: "verification_result" as const, scope: "iteration" as const, cardId: null, status: "skipped" as const, summary: "No tests found." },
+    ];
+    const prompt = buildRetrospectivePrompt({ ...input, events });
+    assert.ok(prompt.includes("Automated test results:"));
+    assert.ok(prompt.includes("Tests for card c11 passed: 20 of 20 tests passed."));
+    assert.ok(prompt.includes("Whole-project tests failed: 1 of 3 tests failed."));
+    assert.ok(!prompt.includes("No tests found."));
+    assert.ok(!buildRetrospectivePrompt(input).includes("Automated test results:"));
+  });
+
   it("caps the number of listed events", () => {
     const events = Array.from({ length: 30 }, (_, i) => ({
       type: "issue_raised" as const, cardId: `c${i}`, kind: "blocked" as const, message: "m",
